@@ -1,0 +1,21 @@
+# General Python ignores
+*.py[cod]
+__pycache__/
+*.so
+
+# Pyenv local version file
+.python-version
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# Jupyter notebook files
+.ipynb_checkpoints
+
+# OS generated files
+.DS_Store
+
+# Visual Studio Code files
+.vscode/
