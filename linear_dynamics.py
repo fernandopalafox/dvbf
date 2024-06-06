@@ -147,15 +147,7 @@ def eval_E_x(
     """
 
     def step_dynamics_scan(x_t, u_R_t):
-        E_u_H_t = jnp.sum(
-            jnp.stack(
-                [
-                    eval_u_H_t(x_t, theta) * b_0[l]
-                    for l, theta in enumerate(thetas)
-                ]
-            ),
-            axis=0,
-        )
+        E_u_H_t = eval_E_u_H(x_t, b_0)
         E_u_t = jnp.concatenate([u_R_t, E_u_H_t])
         x_t_plus_1 = step_dynamics(x_t, E_u_t)
         return x_t_plus_1, x_t_plus_1
