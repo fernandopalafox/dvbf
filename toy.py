@@ -28,7 +28,7 @@ def step_dynamics(x_t: jnp.ndarray, u_t: jnp.ndarray) -> jnp.ndarray:
 
 
 def eval_J_r(x_0: jnp.ndarray, u_R: jnp.ndarray) -> jnp.ndarray:
-    raise NotImplementedError
+    """Evaluate the robot cost given initial state and robot controls"""
     return 0.0
 
 
@@ -37,27 +37,28 @@ def eval_H(b: jnp.ndarray) -> jnp.ndarray:
     return -jnp.sum(b * jnp.log(b))
 
 
-def eval_J_i(b_0: jnp.ndarray, u_R: jnp.ndarray) -> jnp.ndarray:
-    """Evaluate the information cost given initial belief and robot
-    controls
+def eval_J_i(
+    x: jnp.ndarray, u_R: jnp.ndarray, b_0: jnp.ndarray
+) -> jnp.ndarray:
+    """Evaluate the information cost given the state trajectory, robot controls
+    and initial belief.
     Inputs:
-    - b_0: initial belief
+    - x: state trajectory (x_0, x_1, ..., x_{T})
     - u_R: robot controls (u_0, u_1, ..., u_{T-1})
+    - b_0: initial belief
     """
-    T = len(u_R)
-    raise NotImplementedError
-    return 0.0
+    return eval_H(eval_b_t(x, u_R, b_0))
 
 
 def eval_E_J(
-    x_0: jnp.ndarray, b_0: jnp.ndarray, u_R: jnp.ndarray, λ: float
+    x_0: jnp.ndarray, u_R: jnp.ndarray, b_0: jnp.ndarray, λ: float
 ) -> jnp.ndarray:
     """Evaluate the expected cost given initial state, initial belief,
     and robot controls
     Note: This is the cost of the expected trajectory
     """
     E_x = eval_E_x(x_0, b_0, u_R)
-    return eval_J_r(E_x, u_R) + λ * eval_J_i(b_0, u_R)
+    return eval_J_r(E_x, u_R) + λ * eval_J_i(E_x, u_R, b_0)
 
 
 def eval_u_H(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
@@ -78,7 +79,7 @@ def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
 
 
 def eval_x(
-    x_0: jnp.ndarray, theta: jnp.ndarray, u_R: jnp.ndarray
+    x_0: jnp.ndarray, u_R: jnp.ndarray, theta: jnp.ndarray
 ) -> jnp.ndarray:
     """Compute the state trajectory given init. state, parameters, and robot
     controls
@@ -103,7 +104,8 @@ def eval_x(
 def eval_E_x(
     x_0: jnp.ndarray, u_R: jnp.ndarray, b_0: jnp.ndarray
 ) -> jnp.ndarray:
-    """Compute expected states given init. state, init. belief, and robot controls
+    """Compute expected states given init. state, init. belief, and robot
+    controls
     Inputs:
     - x_0: state at time 0
     - b_0: belief at time 0
