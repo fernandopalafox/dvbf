@@ -237,6 +237,6 @@ def make_transition_model(x: jnp.ndarray, u: jnp.ndarray):
 
 # Test
 u_R = jnp.array([[0.0], [0.0]])
-b_0 = jnp.array([1.0, 0.0])
+
 
 print(eval_E_J(x_0, u_R, b_0, 0.0))
