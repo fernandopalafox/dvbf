@@ -35,14 +35,21 @@ def step_dynamics(x_t: jnp.ndarray, u_t: jnp.ndarray) -> jnp.ndarray:
 
 
 def eval_J_r(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
-    """Evaluate the robot cost given initial state and robot controls"""
+    """Evaluate the robot cost given initial state and robot controls
+    Inputs:
+    - x: state trajectory (x_0, x_1, ..., x_{T})
+    - u: control trajectory (u_0, u_1, ..., u_{T-1})
+
+    Outputs:
+    - J_r: robot cost
+    """
 
     def stage_cost_scan(stage_cost_t, xu_t):
-        return stage_cost(xu_t[0], xu_t[1]), None
+        return stage_cost_t + stage_cost(xu_t[0], xu_t[1]), None
 
     return (
         terminal_cost(x[-1])
-        + jax.lax.scan(stage_cost_scan, 0.0, (x[:-1], u[:-1]))[0]
+        + jax.lax.scan(stage_cost_scan, 0.0, (x[:-1], u))[0]
     )
 
 
@@ -56,7 +63,7 @@ def eval_J_i(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     and initial belief.
     Inputs:
     - x: state trajectory (x_0, x_1, ..., x_{T})
-    - u: control trajectory (u_0, u_1, ..., u_{T})
+    - u: control trajectory (u_0, u_1, ..., u_{T-1})
     - b_0: initial belief
 
     Outputs:
@@ -83,13 +90,21 @@ def eval_E_J(
     """
     E_x = eval_E_x(x_0, u_R, b_0)
     E_u_H = eval_E_u_H(E_x, thetas)
-    E_u = jnp.concatenate([u_R, E_u_H], axis=1)
+    E_u = jnp.concatenate([u_R, E_u_H[:-1]], axis=1)
     return eval_J_r(E_x, E_u) + λ * eval_J_i(E_x, E_u, b_0)
 
 
 def eval_u_H(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
     """Returns human controls given states and a vector of parameters
     theta
+
+    Inputs:
+    - x: state trajectory (x_0, x_1, ..., x_{t})
+    - theta: human control parameters
+
+    Outputs:
+    - u_H: human controls (u_H_0, u_H_1, ..., u_H_{t})
+
     """
     if len(x.shape) == 1:
         return eval_u_H_t(x, theta)
@@ -105,6 +120,15 @@ def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
 
 
 def eval_E_u_H(x: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
+    """Returns the expected human controls given states and a belief
+
+    Inputs:
+    - x: state trajectory (x_0, x_1, ..., x_{t})
+    - b_0: initial belief
+
+    Outputs:
+    - E_u_H: expected human controls (E[u_H_0], E[u_H_1], ..., E[u_H_{t}])
+    """
 
     def scan_expected_u_H(u_so_far, params_and_belief):
         return (
@@ -171,13 +195,13 @@ def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     """Returns the belief at time index t given the initial belief b_0.
     Inputs:
     - x: state trajectory (x_0, x_1, ..., x_{t})
-    - u: control trajectory (u_0, u_1, ..., u_{t})
+    - u: control trajectory (u_0, u_1, ..., u_{t-1})
     - b_0: initial belief
 
     Outputs:
     - b_k: belief at time t
     """
-    t = len(u) - 1
+    t = len(x) - 1
 
     # Base case
     if t == 1:
@@ -203,7 +227,7 @@ def make_transition_model(x: jnp.ndarray, u: jnp.ndarray):
 
     Inputs:
     - x: state trajectory (x_0, x_1, ..., x_{t})
-    - u: control trajectory (u_0, u_1, ..., u_{t})
+    - u: control trajectory (u_0, u_1, ..., u_{t-1})
 
     Outputs:
     - Gaussian pdf for x_t given x_{0:t-1}
@@ -242,4 +266,4 @@ def make_transition_model(x: jnp.ndarray, u: jnp.ndarray):
 u_R = jnp.array([[0.0], [0.0]])
 
 
-print(eval_E_J(x_0, u_R, b_0, 0.0))
+print(eval_E_J(x_0, u_R, b_0, 0.5))
