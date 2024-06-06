@@ -113,7 +113,11 @@ def eval_E_u_H(x: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
             None,
         )
 
-    return jax.lax.scan(scan_expected_u_H, 0.0, (thetas, b_0))[0]
+    return jax.lax.scan(
+        scan_expected_u_H,
+        eval_u_H(x, thetas[0]) * b_0[0],
+        (thetas[1:], b_0[1:]),
+    )[0]
 
 
 def eval_x(
