@@ -38,8 +38,8 @@ def eval_H(b: jnp.ndarray) -> jnp.ndarray:
 
 
 def eval_J_i(b_0: jnp.ndarray, u_R: jnp.ndarray) -> jnp.ndarray:
-    """
-    Evaluate the information cost given initial belief and robot controls
+    """Evaluate the information cost given initial belief and robot
+    controls
     Inputs:
     - b_0: initial belief
     - u_R: robot controls (u_0, u_1, ..., u_{T-1})
@@ -52,8 +52,8 @@ def eval_J_i(b_0: jnp.ndarray, u_R: jnp.ndarray) -> jnp.ndarray:
 def eval_E_J(
     x_0: jnp.ndarray, b_0: jnp.ndarray, u_R: jnp.ndarray, λ: float
 ) -> jnp.ndarray:
-    """
-    Evaluate the expected cost given initial state, initial belief, and robot controls
+    """Evaluate the expected cost given initial state, initial belief,
+    and robot controls
     Note: This is the cost of the expected trajectory
     """
     E_x = eval_E_x(x_0, b_0, u_R)
@@ -61,12 +61,18 @@ def eval_E_J(
 
 
 def eval_u_H(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
-    """Returns human controls given states and a vector of parameters theta"""
+    """Returns human controls given states and a vector of parameters
+    theta
+    """
+
     return jnp.array([eval_u_H_t(x_t, theta) for x_t in x])
 
 
 def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
-    """Returns a single human controls given a state and a vector of parameters theta"""
+    """Returns a single human controls given a state and a vector of
+    parameters theta
+    """
+
     print("warning: u_H is not implemented")
     return jnp.array([1.0, 1.0, 1.0])
 
@@ -74,8 +80,8 @@ def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
 def eval_x(
     x_0: jnp.ndarray, theta: jnp.ndarray, u_R: jnp.ndarray
 ) -> jnp.ndarray:
-    """
-    Compute the state trajectory given init. state, parameters, and robot controls
+    """Compute the state trajectory given init. state, parameters, and robot
+    controls
 
     Inputs:
     - x_0: initial state
@@ -97,8 +103,7 @@ def eval_x(
 def eval_E_x(
     x_0: jnp.ndarray, u_R: jnp.ndarray, b_0: jnp.ndarray
 ) -> jnp.ndarray:
-    """
-    Compute expected states given init. state, init. belief, and robot controls
+    """Compute expected states given init. state, init. belief, and robot controls
     Inputs:
     - x_0: state at time 0
     - b_0: belief at time 0
@@ -126,8 +131,7 @@ def eval_E_x(
 def eval_b_t(
     x: jnp.ndarray, u_R: jnp.ndarray, b_0: jnp.ndarray
 ) -> jnp.ndarray:
-    """
-    Returns the belief at time index t given the initial belief b_0.
+    """Returns the belief at time index t given the initial belief b_0.
     Inputs:
     - b_0: initial belief
     - x: state trajectory (x_0, x_1, ..., x_{t})
@@ -158,8 +162,7 @@ def eval_b_t(
 def make_transition_model(
     x: jnp.ndarray, u_R: jnp.ndarray, theta: jnp.ndarray
 ):
-    """
-    Return the state transition model at time t.
+    """Return the state transition model at time t.
 
     Inputs:
     - x: state trajectory (x_0, x_1, ..., x_{t})
