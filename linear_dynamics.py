@@ -57,6 +57,9 @@ def eval_J_i(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     - x: state trajectory (x_0, x_1, ..., x_{T})
     - u: control trajectory (u_0, u_1, ..., u_{T-1})
     - b_0: initial belief
+
+    Outputs:
+    - J_i: entropy of the belief at time T
     """
     return eval_H(eval_b_t(x, u, b_0))
 
@@ -66,6 +69,15 @@ def eval_E_J(
 ) -> jnp.ndarray:
     """Evaluate the expected cost given initial state, initial belief,
     and robot controls
+    Inputs:
+    - x_0: initial state
+    - u_R: robot controls (u_0, u_1, ..., u_{T-1})
+    - b_0: initial belief
+    - λ: curiosity parameter
+
+    Outputs:
+    - E_J: expected cost
+
     Note: This is the cost of the expected stat and control trajectories
     """
     E_x = eval_E_x(x_0, u_R, b_0)
