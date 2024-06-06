@@ -7,7 +7,7 @@ jax.config.update("jax_disable_jit", True)
 # Simulation parameters
 N = 10
 thetas = jnp.array([0.1, 0.2])
-b_0 = jnp.array([0.0, 1.0])
+b_0 = jnp.array([0.01, 0.99])
 
 # System dynamics: 1D double integrator.
 # Two agents: robot and human.
