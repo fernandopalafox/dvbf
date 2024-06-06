@@ -27,9 +27,16 @@ def step_dynamics(x_t: jnp.ndarray, u_t: jnp.ndarray) -> jnp.ndarray:
     return A @ x_t + B @ u_t
 
 
-def eval_J_r(x_0: jnp.ndarray, u_R: jnp.ndarray) -> jnp.ndarray:
+def eval_J_r(x: jnp.ndarray, u_R: jnp.ndarray) -> jnp.ndarray:
     """Evaluate the robot cost given initial state and robot controls"""
-    return 0.0
+
+    def stage_cost_scan(stage_cost_t, xu_t):
+        return stage_cost(xu_t[0], xu_t[1]), None
+
+    return (
+        terminal_cost(x[-1])
+        + jax.lax.scan(stage_cost_scan, 0.0, jnp.stack([x, u_R]))[0]
+    )
 
 
 def eval_H(b: jnp.ndarray) -> jnp.ndarray:
