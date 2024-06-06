@@ -173,8 +173,10 @@ def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
         b_t_minus_1 = eval_b_t(x[:-1], u[:-1], b_0)
         transition_model = make_transition_model(x, u[:-1])
         b_t = jnp.array(
-            b_t_minus_1[l] * transition_model(x[-1])
-            for l, _ in enumerate(thetas)
+            [
+                b_t_minus_1[l] * transition_model(x[-1])
+                for l, _ in enumerate(thetas)
+            ]
         )
         return b_t
 
@@ -182,19 +184,28 @@ def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
 def make_transition_model(x: jnp.ndarray, u: jnp.ndarray):
     """Return the state transition model at time t.
 
+    Assumes a linear system with additive Gaussian noise.
+
     Inputs:
     - x: state trajectory (x_0, x_1, ..., x_{t})
     - u: control trajectory (u_0, u_1, ..., u_{t-1})
-    - theta: human control parameters
 
     Outputs:
-    - gaussian_pdf: a Gaussian pdf for the probability of x_t given x_{0:t-1}
-
+    - Gaussian pdf for x_t given x_{0:t-1}
     """
     # Expected mean and covariance at time t
     t = len(u)
-    mu_t = A**t @ x_0 + sum([A ** (t - 1 - j) @ B @ u[j] for j in range(t)])
-    sigma_t = sum([A**j @ sigma @ (A**j).T for j in range(t)])
+    mu_t = jnp.linalg.matrix_power(A, t) @ x[0] + sum(
+        [jnp.linalg.matrix_power(A, t - 1 - j) @ B @ u[j] for j in range(t)]
+    )
+    sigma_t = sum(
+        [
+            jnp.linalg.matrix_power(A, j)
+            @ sigma
+            @ (jnp.linalg.matrix_power(A, j)).T
+            for j in range(t)
+        ]
+    )
     k = len(mu_t)
 
     def gaussian_pdf(x):
