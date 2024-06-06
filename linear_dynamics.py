@@ -91,7 +91,10 @@ def eval_u_H(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
     """Returns human controls given states and a vector of parameters
     theta
     """
-    return jnp.array([eval_u_H_t(x_t, theta) for x_t in x])
+    if len(x.shape) == 1:
+        return eval_u_H_t(x, theta)
+    else:
+        return jnp.array([eval_u_H_t(x_t, theta) for x_t in x])
 
 
 def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
