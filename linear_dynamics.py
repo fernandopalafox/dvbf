@@ -56,7 +56,7 @@ def eval_J_i(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     and initial belief.
     Inputs:
     - x: state trajectory (x_0, x_1, ..., x_{T})
-    - u: control trajectory (u_0, u_1, ..., u_{T-1})
+    - u: control trajectory (u_0, u_1, ..., u_{T})
     - b_0: initial belief
 
     Outputs:
@@ -140,7 +140,7 @@ def eval_x(
         return x_t_plus_1, x_t_plus_1
 
     x_final, x = jax.lax.scan(step_dynamics_scan, x_0, u_R)
-    return x
+    return jnp.stack([x_0, *x])
 
 
 def eval_E_x(
@@ -152,6 +152,9 @@ def eval_E_x(
     - x_0: state at time 0
     - b_0: belief at time 0
     - u_R: set of robot controls (u_0, u_1, ..., u_{t-1})
+
+    Outputs:
+    - E_x: expected states (x_0, E[x_1], ..., E[x_{t}])
     """
 
     def step_dynamics_scan(x_t, u_R_t):
@@ -161,20 +164,20 @@ def eval_E_x(
         return x_t_plus_1, x_t_plus_1
 
     E_x_final, E_x = jax.lax.scan(step_dynamics_scan, x_0, u_R)
-    return E_x
+    return jnp.stack([x_0, *E_x])
 
 
 def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     """Returns the belief at time index t given the initial belief b_0.
     Inputs:
     - x: state trajectory (x_0, x_1, ..., x_{t})
-    - u: control trajectory (u_0, u_1, ..., u_{t-1})
+    - u: control trajectory (u_0, u_1, ..., u_{t})
     - b_0: initial belief
 
     Outputs:
     - b_k: belief at time t
     """
-    t = len(x)
+    t = len(u) - 1
 
     # Base case
     if t == 1:
@@ -183,7 +186,7 @@ def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     # Recursive case
     else:
         b_t_minus_1 = eval_b_t(x[:-1], u[:-1], b_0)
-        transition_model = make_transition_model(x, u[:-1])
+        transition_model = make_transition_model(x, u)
         b_t = jnp.array(
             [
                 b_t_minus_1[l] * transition_model(x[-1])
@@ -200,13 +203,13 @@ def make_transition_model(x: jnp.ndarray, u: jnp.ndarray):
 
     Inputs:
     - x: state trajectory (x_0, x_1, ..., x_{t})
-    - u: control trajectory (u_0, u_1, ..., u_{t-1})
+    - u: control trajectory (u_0, u_1, ..., u_{t})
 
     Outputs:
     - Gaussian pdf for x_t given x_{0:t-1}
     """
     # Expected mean and covariance at time t
-    t = len(u)
+    t = len(x) - 1
     mu_t = jnp.linalg.matrix_power(A, t) @ x[0] + sum(
         [jnp.linalg.matrix_power(A, t - 1 - j) @ B @ u[j] for j in range(t)]
     )
