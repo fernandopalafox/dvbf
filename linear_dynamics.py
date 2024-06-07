@@ -261,8 +261,40 @@ def make_transition_model(x: jnp.ndarray, u: jnp.ndarray):
     return gaussian_pdf
 
 
-# Test
+# Test cost functions and gradients
 u_R = jnp.array([[0.0], [0.0]])
+λ = 0.5
+print(jax.grad(eval_E_J, argnums=3)(x_0, u_R, b_0, λ))
+
+# 3D plot of the cost function
+
+num_points = 30
+axis_limit = 30.0
+u_axis = jnp.linspace(-axis_limit, axis_limit, num_points)
+u1, u2 = jnp.meshgrid(u_axis, u_axis)
+u_R_grid = jnp.stack([u1, u2], axis=-1)
+u_R_grid = u_R_grid.reshape(-1, 2)
+J = jnp.array(
+    [
+        eval_E_J(x_0, jnp.array([[u_R_i[0]], [u_R_i[1]]]), b_0, λ)
+        for u_R_i in u_R_grid
+    ]
+)
+J = J.reshape(num_points, num_points)
 
 
-print(eval_E_J(x_0, u_R, b_0, 0.5))
+import matplotlib.pyplot as plt
+
+fig = plt.figure()
+ax = fig.add_subplot(projection="3d")
+surf = ax.plot_surface(u1, u2, J, cmap="viridis")
+plt.show()
+
+# Solve the optimization problem using gradient descent
+learning_rate = 1.0
+while True:
+    grad = jax.grad(eval_E_J, argnums=1)(x_0, u_R, b_0, 0.5)
+    u_R = u_R - learning_rate * grad
+    print(u_R, jnp.linalg.norm(grad))
+    if jnp.linalg.norm(grad) < 1e-6:
+        break
