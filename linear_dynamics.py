@@ -1,7 +1,7 @@
 import jax
 from jax import numpy as jnp
 
-jax.config.update("jax_disable_jit", True)
+# jax.config.update("jax_disable_jit", True)
 
 # Simulation parameters
 N = 10
@@ -262,39 +262,62 @@ def make_transition_model(x: jnp.ndarray, u: jnp.ndarray):
 
 
 # Test cost functions and gradients
-u_R = jnp.array([[0.0], [0.0]])
+
+# Sim parameters
+u_R = jnp.array([[50.0], [10.0]])
 λ = 0.5
-print(jax.grad(eval_E_J, argnums=3)(x_0, u_R, b_0, λ))
+num_points = 30
+axis_limit = 50.0
+learning_rate = 1.0
+descent_steps = 100
+plot_interval = descent_steps // 20
+epsilon_cost = 0.0  # so that track is above surface
 
 # 3D plot of the cost function
+eval_E_J_jit = jax.jit(eval_E_J)
 
-num_points = 30
-axis_limit = 30.0
+# Surface
 u_axis = jnp.linspace(-axis_limit, axis_limit, num_points)
 u1, u2 = jnp.meshgrid(u_axis, u_axis)
 u_R_grid = jnp.stack([u1, u2], axis=-1)
 u_R_grid = u_R_grid.reshape(-1, 2)
-J = jnp.array(
-    [
-        eval_E_J(x_0, jnp.array([[u_R_i[0]], [u_R_i[1]]]), b_0, λ)
-        for u_R_i in u_R_grid
-    ]
+J_grid = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
+    x_0, u_R_grid[:, :, jnp.newaxis], b_0, λ
 )
-J = J.reshape(num_points, num_points)
+J_grid = J_grid.reshape(num_points, num_points)
 
+
+# Gradient descent
+def grad_descent_scan(u_R, _):
+    grad = jax.grad(eval_E_J_jit, argnums=1)(x_0, u_R, b_0, λ)
+    u_R_new = u_R - learning_rate * grad
+    return u_R_new, u_R_new
+
+
+_, u_R_descent = jax.lax.scan(
+    grad_descent_scan, u_R, jnp.arange(descent_steps)
+)
+u_R_descent = jnp.concatenate([u_R[jnp.newaxis, :, :], u_R_descent], axis=0)
+J_descent = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
+    x_0, u_R_descent, b_0, λ
+)
 
 import matplotlib.pyplot as plt
 
 fig = plt.figure()
 ax = fig.add_subplot(projection="3d")
-surf = ax.plot_surface(u1, u2, J, cmap="viridis")
+ax.plot_surface(u1, u2, J_grid, cmap="viridis", linewidth=0.1, zorder=1)
+ax.plot(
+    u_R_descent[::plot_interval, 0].flatten(),
+    u_R_descent[::plot_interval, 1].flatten(),
+    J_descent[::plot_interval] + epsilon_cost,
+    "-ro",
+    markersize=5,
+    zorder=4,
+    label="Gradient descent",
+)
+ax.set_xlabel("u1")
+ax.set_ylabel("u2")
+ax.set_zlabel("J")
+ax.title.set_text("Cost as a function of robot controls")
 plt.show()
-
-# Solve the optimization problem using gradient descent
-learning_rate = 1.0
-while True:
-    grad = jax.grad(eval_E_J, argnums=1)(x_0, u_R, b_0, 0.5)
-    u_R = u_R - learning_rate * grad
-    print(u_R, jnp.linalg.norm(grad))
-    if jnp.linalg.norm(grad) < 1e-6:
-        break
