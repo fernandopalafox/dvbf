@@ -1,5 +1,4 @@
 import jax
-import numpy
 from jax import numpy as jnp
 
 jax.config.update("jax_disable_jit", True)
