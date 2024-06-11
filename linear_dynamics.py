@@ -14,16 +14,16 @@ from jax import numpy as jnp
 
 # Simulation parameters
 # TODO: Move these to a separate file
-thetas = jnp.array([[-10.0], [0.0], [10.0], [20.0]])
+thetas = jnp.array([[0.1], [1.0], [10.0]])
 b_0 = jnp.array([1 / len(thetas) for _ in thetas])
 
 assert sum(b_0) == 1.0, "Initial belief must sum to 1.0"
 
 # System dynamics: 1D double integrator.
 # Two agents: robot and human.
-x_0 = jnp.array([-2.0, 0.0, -4.0, 0.0])
-dt = 0.1
-w_scale = 0.5
+x_0 = jnp.array([-1.0, 0.0, -3.0, 0.0])
+dt = 1.0
+w_scale = 0.1
 A_single = jnp.array([[1.0, dt], [0.0, 1.0]])
 B_single = jnp.array([[0.5 * dt**2], [dt]])
 A = jnp.block([[A_single, jnp.zeros((2, 2))], [jnp.zeros((2, 2)), A_single]])
@@ -68,7 +68,7 @@ def eval_J_r(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
 
 def eval_H(b: jnp.ndarray) -> jnp.ndarray:
     """Shannon entropy of a belief vector b"""
-    return -jnp.sum(b * jnp.log(b))
+    return -jnp.sum(b * jnp.log(b + 1e-8))  # avoid log(0) = -inf
 
 
 def eval_J_i(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
@@ -122,7 +122,7 @@ def eval_u_H(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
     if len(x.shape) == 1:
         return eval_u_H_t(x, theta)
     else:
-        return jnp.array([eval_u_H_t(x_t, theta) for x_t in x])
+        return jax.vmap(eval_u_H_t, in_axes=(0, None))(x, theta)
 
 
 def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
@@ -132,17 +132,22 @@ def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
     min_distance = theta[0]
     x_R_t = x_t[0]
     x_H_t = x_t[2]
-    distance_squared = x_R_t - x_H_t
-    k = 10.0
-    # return jnp.array(
-    #     [
-    #         1
-    #         / (1 + jnp.exp(k * (distance_squared - min_distance**2)))
-    #         * jnp.tanh(x_H_t - x_R_t)
-    #     ]
-    # )
+    sharpness_sigm = 2.0  # affects cutoff when r-h distance > min_distance
+    sharpness_tanh = 20.0  # how quickly h-control goes between -1 and 1
+    control_scale = 1.0
 
-    return theta
+    def sigmoid(x):
+        return 1 / (1 + jnp.exp(-sharpness_sigm * x))
+
+    diff = x_R_t - x_H_t
+    return jnp.array(
+        [
+            sigmoid(diff + min_distance)
+            * sigmoid(-diff + min_distance)
+            * -jnp.tanh(sharpness_tanh * diff)
+            * control_scale
+        ]
+    )
 
 
 def eval_E_u_H(x: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
@@ -191,7 +196,7 @@ def eval_x(
         x_t_plus_1 = step_dynamics(x_t, u_t)
         return x_t_plus_1, x_t_plus_1
 
-    x_final, x = jax.lax.scan(step_dynamics_scan, x_0, u_R)
+    x_trajectory, x = jax.lax.scan(step_dynamics_scan, x_0, u_R)
     return jnp.stack([x_0, *x])
 
 
@@ -247,15 +252,13 @@ def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
         if u_R.ndim == 1:
             u_R = u_R[:, jnp.newaxis]
         xs = jax.vmap(eval_x, in_axes=(None, None, 0))(x[0], u_R, thetas)
-        u_Hs = jax.vmap(eval_u_H, in_axes=(0, 0))(
-            xs, thetas
-        )  # deterministic controls u_1, u_2, ..., u_{t}
+        u_Hs = jax.vmap(eval_u_H, in_axes=(0, 0))(xs, thetas)
         us = jax.vmap(lambda u_H: jnp.concatenate([u_R, u_H[:-1]], axis=1))(
             u_Hs
-        )
+        )  # deterministic controls u_1, u_2, ..., u_{t-1} for each theta
         b_t = jax.vmap(
             lambda b_theta, x_theta, u_theta: b_theta
-            * transition_model(x[-1], x_theta, u_theta)
+            * transition_model(x[-1], x_theta[:-1], u_theta)
         )(
             b_t_minus_1, xs, us
         )  # b_t = b_{t-1} * p(x_t | x_{0:t-1}, u_{0:t-1}, θ)
@@ -270,14 +273,14 @@ def transition_model(x_query: jnp.ndarray, x: jnp.ndarray, u: jnp.ndarray):
 
     Inputs:
     - x_query: state to query the pdf at
-    - x: state trajectory (x_0, x_1, ..., x_{t})
+    - x: state trajectory (x_0, x_1, ..., x_{t-1})
     - u: control trajectory (u_0, u_1, ..., u_{t-1})
 
     Outputs:
     - Gaussian pdf for x_t given x_{0:t-1}
     """
     # Expected mean and covariance at time t
-    t = len(x) - 1
+    t = len(x)
     mu_t = jnp.linalg.matrix_power(A, t) @ x[0] + sum(
         [jnp.linalg.matrix_power(A, t - 1 - j) @ B @ u[j] for j in range(t)]
     )
@@ -307,9 +310,9 @@ def transition_model(x_query: jnp.ndarray, x: jnp.ndarray, u: jnp.ndarray):
 
 
 # Sim parameters
-horizon = 6  # time horizon. Control inputs are u_0, u_1, ..., u_{horizon-1}
+horizon = 7  # time horizon. Control inputs are u_0, u_1, ..., u_{horizon-1}
 u_R = jnp.array([[0.0] for _ in range(horizon)])  # init guess for u_R
-λ = 1.0
+λ = 1.0  # curiosity parameter
 learning_rate = 0.1
 descent_steps = 200
 
@@ -318,9 +321,9 @@ axis_limit = 50.0
 plot_interval = descent_steps // 20
 epsilon_cost = 0.0  # so that track is above surface
 max_marker_size = 200
-params_true = thetas[2]
+params_true = thetas[1]
 
-# Gradient descent
+# Gradient descent on expected cost
 eval_E_J_jit = jax.jit(eval_E_J)
 
 
@@ -338,13 +341,15 @@ u_R_descent = jnp.concatenate([u_R[jnp.newaxis, :, :], u_R_descent], axis=0)
 J_descent = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
     x_0, u_R_descent, b_0, λ
 )
-x_descent = jax.jit(eval_x)(x_0, u_R_descent[-1], params_true)
-u_H_descent = eval_u_H(x_descent[:-1], params_true)
-u_descent = jnp.concatenate([u_R_descent[-1], u_H_descent], axis=1)
-b_descent = [
-    eval_b_t(x_descent[: t + 1], u_descent[:t], b_0)
+x_trajectory = jax.jit(eval_x)(x_0, u_R_descent[-1], params_true)
+u_H_trajectory = eval_u_H(x_trajectory[:-1], params_true)
+u_trajectory = jnp.concatenate([u_R_descent[-1], u_H_trajectory], axis=1)
+b_trajectory = [
+    eval_b_t(x_trajectory[: t + 1], u_trajectory[: t + 1], b_0)
     for t in range(horizon + 1)
 ]
+h_trajectory = jax.vmap(eval_H)(jnp.array(b_trajectory))
+
 
 # Visualization
 import matplotlib.pyplot as plt
@@ -353,7 +358,7 @@ import matplotlib.pyplot as plt
 # Gradient descent norm
 fig, ax = plt.subplots(1, 1)
 ax.plot(descent_trajectory[1])
-ax.set_xlabel("Descent step")
+ax.set_xlabel("Step")
 ax.set_ylabel("Gradient norm")
 fig.savefig("figures/grad_norm.png")
 
@@ -361,12 +366,13 @@ fig.savefig("figures/grad_norm.png")
 # Subplot 1: Robot and human positions
 # Subplot 2: Robot and human controls
 # Subplot 3: Belief over time
+# Subplot 4: Belief entropy
 
 # x-axis position, y-axis time
 time_vec = jnp.arange(horizon + 1) * dt
-fig, ax = plt.subplots(3, 1)
-ax[0].plot(time_vec, x_descent[:, 0], label="Robot")
-ax[0].plot(time_vec, x_descent[:, 2], label="Human")
+fig, ax = plt.subplots(4, 1)
+ax[0].plot(time_vec, x_trajectory[:, 0], label="Robot")
+ax[0].plot(time_vec, x_trajectory[:, 2], label="Human")
 ax[0].set_ylabel("Position [m]")
 ax[0].legend()
 ax[0].tick_params(
@@ -378,7 +384,9 @@ ax[0].tick_params(
 )
 
 ax[1].plot(time_vec[:-1], u_R_descent[-1], label="Robot")
-ax[1].plot(time_vec[:-1], eval_u_H(x_descent[:-1], params_true), label="Human")
+ax[1].plot(
+    time_vec[:-1], eval_u_H(x_trajectory[:-1], params_true), label="Human"
+)
 ax[1].set_ylabel("Control [m/s^2]")
 ax[1].tick_params(
     axis="x",
@@ -388,7 +396,7 @@ ax[1].tick_params(
     labelbottom=False,
 )
 
-for t, belief in zip(time_vec, b_descent):
+for t, belief in zip(time_vec, b_trajectory):
     for i, belief_value in enumerate(belief):
         ax[2].scatter(
             t,
@@ -399,39 +407,52 @@ for t, belief in zip(time_vec, b_descent):
         )
 ax[2].set_yticks(range(len(thetas)))
 ax[2].set_ylabel("Parameter index")
-ax[2].set_xlabel("Time [s]")
+ax[2].tick_params(
+    axis="x",
+    which="both",
+    bottom=False,
+    top=False,
+    labelbottom=False,
+)
+
+ax[3].plot(time_vec, h_trajectory)
+ax[3].set_ylabel("Entropy")
+ax[3].set_xlabel("Time [s]")
+ax[3].set_ylim(bottom=0.0, top=max(h_trajectory) + 0.1)
+
+fig.tight_layout()
 
 fig.savefig("figures/robot_human.png")
 
-# Plot gradient descent on cost landscape (only works for time horizon of 1)
-if len(u_R) > 1:
-    raise ValueError("Plotting only works for time horizon of 1")
+# # Plot gradient descent on cost landscape (only works for time horizon of 1)
+# if len(u_R) > 1:
+#     raise ValueError("Plotting only works for time horizon of 1")
 
-# Surface
-u_axis = jnp.linspace(-axis_limit, axis_limit, num_points)
-u1, u2 = jnp.meshgrid(u_axis, u_axis)
-u_R_grid = jnp.stack([u1, u2], axis=-1)
-u_R_grid = u_R_grid.reshape(-1, 2)
-J_grid = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
-    x_0, u_R_grid[:, :, jnp.newaxis], b_0, λ
-)
-J_grid = J_grid.reshape(num_points, num_points)
+# # Surface
+# u_axis = jnp.linspace(-axis_limit, axis_limit, num_points)
+# u1, u2 = jnp.meshgrid(u_axis, u_axis)
+# u_R_grid = jnp.stack([u1, u2], axis=-1)
+# u_R_grid = u_R_grid.reshape(-1, 2)
+# J_grid = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
+#     x_0, u_R_grid[:, :, jnp.newaxis], b_0, λ
+# )
+# J_grid = J_grid.reshape(num_points, num_points)
 
-fig = plt.figure()
-ax = fig.add_subplot(projection="3d")
-ax.plot_surface(u1, u2, J_grid, cmap="viridis", linewidth=0.1, zorder=1)
-ax.plot(
-    u_R_descent[::plot_interval, 0].flatten(),
-    u_R_descent[::plot_interval, 1].flatten(),
-    J_descent[::plot_interval] + epsilon_cost,
-    "-ro",
-    markersize=5,
-    zorder=4,
-    label="Gradient descent",
-)
-ax.set_xlabel("u1")
-ax.set_ylabel("u2")
-ax.set_zlabel("J")
-ax.title.set_text("Cost as a function of robot controls")
-plt.show()
-fig.savefig("figures/grad_descent.png")
+# fig = plt.figure()
+# ax = fig.add_subplot(projection="3d")
+# ax.plot_surface(u1, u2, J_grid, cmap="viridis", linewidth=0.1, zorder=1)
+# ax.plot(
+#     u_R_descent[::plot_interval, 0].flatten(),
+#     u_R_descent[::plot_interval, 1].flatten(),
+#     J_descent[::plot_interval] + epsilon_cost,
+#     "-ro",
+#     markersize=5,
+#     zorder=4,
+#     label="Gradient descent",
+# )
+# ax.set_xlabel("u1")
+# ax.set_ylabel("u2")
+# ax.set_zlabel("J")
+# ax.title.set_text("Cost as a function of robot controls")
+# plt.show()
+# fig.savefig("figures/grad_descent.png")
