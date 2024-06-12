@@ -33,9 +33,8 @@ Sigma = w_scale * jnp.eye(4)
 
 # Cost
 def stage_cost(x_t, u_t):
-    u_R = u_t[0]
-    return 0.0
-    # return jnp.dot(u_R, u_R)
+    u_R_t = u_t[0]
+    return jnp.dot(u_R_t, u_R_t)
 
 
 def terminal_cost(x_T):
@@ -311,10 +310,11 @@ def transition_model(x_query: jnp.ndarray, x: jnp.ndarray, u: jnp.ndarray):
 
 # Sim parameters
 horizon = 7  # time horizon. Control inputs are u_0, u_1, ..., u_{horizon-1}
-u_R = jnp.array([[0.0] for _ in range(horizon)])  # init guess for u_R
-λ = 1.0  # curiosity parameter
+u_R_init = jnp.array([[0.0] for _ in range(horizon)])  # init guess for u_R
+λ_0 = 1.0  # curiosity parameter
 learning_rate = 0.1
 descent_steps = 200
+mpc_steps = 10
 
 num_points = 30
 axis_limit = 50.0
@@ -323,33 +323,49 @@ epsilon_cost = 0.0  # so that track is above surface
 max_marker_size = 200
 params_true = thetas[1]
 
-# Gradient descent on expected cost
+# Gradient descent wrt u_R (give \lambda)
+import time
+
 eval_E_J_jit = jax.jit(eval_E_J)
 
 
-def grad_descent_scan(u_R, _):
-    grad = jax.grad(eval_E_J_jit, argnums=1)(x_0, u_R, b_0, λ)
-    u_R_new = u_R - learning_rate * grad
-    return u_R_new, (u_R_new, jnp.linalg.norm(grad))
+def solve_for_u_R(u_R, λ):
+    def grad_descent_scan(u_R, _):
+        grad = jax.grad(eval_E_J_jit, argnums=1)(x_0, u_R, b_0, λ_0)
+        u_R_new = u_R - learning_rate * grad
+        return u_R_new, (u_R_new, jnp.linalg.norm(grad))
+
+    _, descent_trajectory = jax.lax.scan(
+        grad_descent_scan, u_R_init, jnp.arange(descent_steps)
+    )
+    return descent_trajectory
 
 
-_, descent_trajectory = jax.lax.scan(
-    grad_descent_scan, u_R, jnp.arange(descent_steps)
-)
+start = time.time()
+descent_trajectory = solve_for_u_R(u_R_init, λ_0)
+print(f"Gradient descent time taken: {time.time() - start}")
+
+# Process the final trajectory
+start = time.time()
 u_R_descent = descent_trajectory[0]
-u_R_descent = jnp.concatenate([u_R[jnp.newaxis, :, :], u_R_descent], axis=0)
-J_descent = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
-    x_0, u_R_descent, b_0, λ
+u_R_descent = jnp.concatenate(
+    [u_R_init[jnp.newaxis, :, :], u_R_descent], axis=0
 )
-x_trajectory = jax.jit(eval_x)(x_0, u_R_descent[-1], params_true)
-u_H_trajectory = eval_u_H(x_trajectory[:-1], params_true)
-u_trajectory = jnp.concatenate([u_R_descent[-1], u_H_trajectory], axis=1)
+J_descent = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
+    x_0, u_R_descent, b_0, λ_0
+)
+u_R_final = u_R_descent[-1]
+x_trajectory = jax.jit(eval_x)(x_0, u_R_final, params_true)
+u_H_trajectory = jax.jit(eval_u_H)(x_trajectory[:-1], params_true)
+u_trajectory = jnp.concatenate([u_R_final, u_H_trajectory], axis=1)
+eval_b_t_jit = jax.jit(eval_b_t)
 b_trajectory = [
-    eval_b_t(x_trajectory[: t + 1], u_trajectory[: t + 1], b_0)
+    eval_b_t_jit(x_trajectory[: t + 1], u_trajectory[: t + 1], b_0)
     for t in range(horizon + 1)
 ]
 h_trajectory = jax.vmap(eval_H)(jnp.array(b_trajectory))
 
+print(f"Processing time taken: {time.time() - start}")
 
 # Visualization
 import matplotlib.pyplot as plt
@@ -358,8 +374,7 @@ import matplotlib.pyplot as plt
 # Gradient descent norm
 fig, ax = plt.subplots(1, 1)
 ax.plot(descent_trajectory[1])
-ax.set_xlabel("Step")
-ax.set_ylabel("Gradient norm")
+ax.set_ylabel("Norm grad J wrt u^R")
 fig.savefig("figures/grad_norm.png")
 
 # Robot and human position
@@ -383,7 +398,7 @@ ax[0].tick_params(
     labelbottom=False,
 )
 
-ax[1].plot(time_vec[:-1], u_R_descent[-1], label="Robot")
+ax[1].plot(time_vec[:-1], u_R_final, label="Robot")
 ax[1].plot(
     time_vec[:-1], eval_u_H(x_trajectory[:-1], params_true), label="Human"
 )
@@ -423,36 +438,3 @@ ax[3].set_ylim(bottom=0.0, top=max(h_trajectory) + 0.1)
 fig.tight_layout()
 
 fig.savefig("figures/robot_human.png")
-
-# # Plot gradient descent on cost landscape (only works for time horizon of 1)
-# if len(u_R) > 1:
-#     raise ValueError("Plotting only works for time horizon of 1")
-
-# # Surface
-# u_axis = jnp.linspace(-axis_limit, axis_limit, num_points)
-# u1, u2 = jnp.meshgrid(u_axis, u_axis)
-# u_R_grid = jnp.stack([u1, u2], axis=-1)
-# u_R_grid = u_R_grid.reshape(-1, 2)
-# J_grid = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
-#     x_0, u_R_grid[:, :, jnp.newaxis], b_0, λ
-# )
-# J_grid = J_grid.reshape(num_points, num_points)
-
-# fig = plt.figure()
-# ax = fig.add_subplot(projection="3d")
-# ax.plot_surface(u1, u2, J_grid, cmap="viridis", linewidth=0.1, zorder=1)
-# ax.plot(
-#     u_R_descent[::plot_interval, 0].flatten(),
-#     u_R_descent[::plot_interval, 1].flatten(),
-#     J_descent[::plot_interval] + epsilon_cost,
-#     "-ro",
-#     markersize=5,
-#     zorder=4,
-#     label="Gradient descent",
-# )
-# ax.set_xlabel("u1")
-# ax.set_ylabel("u2")
-# ax.set_zlabel("J")
-# ax.title.set_text("Cost as a function of robot controls")
-# plt.show()
-# fig.savefig("figures/grad_descent.png")
