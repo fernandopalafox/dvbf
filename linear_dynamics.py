@@ -238,17 +238,21 @@ def eval_E_x(
     return jnp.stack([x_0, *E_x])
 
 
-def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
+def eval_b_t(
+    x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray, xs=None, us=None
+) -> jnp.ndarray:
     """Returns the belief at time index t given the initial belief b_0.
     Inputs:
-    - x: state trajectory (x_0, x_1, ..., x_{t})
-    - u: control trajectory (u_0, u_1, ..., u_{t-1})
+    - x: observed state trajectory (x_0, x_1, ..., x_{t})
+    - u: observed control trajectory (u_0, u_1, ..., u_{t-1})
     - b_0: initial belief
+
+    Optional:
+    - xs: deterministic state trajectories for each theta
+    - us: deterministic control trajectories for each theta
 
     Outputs:
     - b_k: belief at time t
-
-    Note: Could be more efficient by saving the deterministic trajectories
     """
     t = len(x) - 1
 
@@ -258,17 +262,20 @@ def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
 
     # Recursive case
     else:
-        b_t_minus_1 = eval_b_t(x[:-1], u[:-1], b_0)
-        u_R = u[:, 0]  # TODO make this more general for higher dim inputs
-        if u_R.ndim == 1:
-            u_R = u_R[:, jnp.newaxis]
-        xs = jax.vmap(eval_E_x, in_axes=(None, None, None, 0))(
-            x[0], u_R, b_0, thetas
-        )
-        u_Hs = jax.vmap(eval_u_H, in_axes=(0, 0))(xs, thetas)
-        us = jax.vmap(lambda u_H: jnp.concatenate([u_R, u_H[:-1]], axis=1))(
-            u_Hs
-        )  # deterministic controls u_1, u_2, ..., u_{t-1} for each theta
+        if xs is None and us is None:
+            u_R = u[:, 0]  # TODO make this more general for higher dim inputs
+            if u_R.ndim == 1:
+                u_R = u_R[:, jnp.newaxis]
+            xs = jax.vmap(eval_E_x, in_axes=(None, None, None, 0))(
+                x[0], u_R, b_0, thetas
+            )
+            u_Hs = jax.vmap(eval_u_H, in_axes=(0, 0))(xs, thetas)
+            us = jax.vmap(
+                lambda u_H: jnp.concatenate([u_R, u_H[:-1]], axis=1)
+            )(
+                u_Hs
+            )  # deterministic controls u_1, u_2, ..., u_{t-1} for each theta
+        b_t_minus_1 = eval_b_t(x[:-1], u[:-1], b_0, xs[:, :-1], us[:, :-1])
         b_t = jax.vmap(
             lambda b_theta, x_theta, u_theta: b_theta
             * transition_model(x[-1], x_theta[:-1], u_theta)
