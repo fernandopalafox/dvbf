@@ -3,7 +3,7 @@ from jax import numpy as jnp
 import matplotlib.pyplot as plt
 
 
-sharpness_sigm = 20.0
+sharpness_sigm = 2.0
 sharpness_tanh = 20.0
 min_distance = 1.0
 control_scale = 1.0

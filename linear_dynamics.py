@@ -326,8 +326,8 @@ def transition_model(x_query: jnp.ndarray, x: jnp.ndarray, u: jnp.ndarray):
 horizon = 7  # time horizon. Control inputs are u_0, u_1, ..., u_{horizon-1}
 u_R_init = jnp.array([[0.0] for _ in range(horizon)])  # init guess for u_R
 λ_init = 0.0  # curiosity parameter
-λ_scale = 0.001  # curiosity parameter scaling factor
-learning_rate = 0.1
+λ_scale = 0.1  # curiosity parameter scaling factor
+learning_rate = 0.0001
 descent_steps = 200
 mpc_steps = 10
 rng_key = jax.random.PRNGKey(0)
@@ -362,127 +362,78 @@ def solve_for_u_R(x_0, u_R_init, b, λ):
     return descent_trajectory
 
 
-# def update_λ(b_0, b_1, λ):
-#     ΔH = eval_H(b_1) - eval_H(b_0)
-#     return jax.lax.cond(
-#         ΔH > 0.0,
-#         lambda λ: λ + λ_scale * ΔH,
-#         lambda λ: jnp.clip(λ - λ_scale * ΔH, 0.0, None),
-#         λ,
-#     )
+def update_λ(b_0, b_1, λ):
+    ΔH = eval_H(b_1) - eval_H(b_0)
+    return jax.lax.cond(
+        ΔH > 0.0,
+        lambda λ: λ + λ_scale * ΔH,
+        lambda λ: jnp.clip(λ - λ_scale * ΔH, 0.0, None),
+        λ,
+    )
 
 
-# def run_mpc(x_init, u_R_init, b_init, λ_init, w, mpc_steps):
-#     x = x_init[jnp.newaxis, :]
-#     u_R = u_R_init[0]
-#     b = b_init[jnp.newaxis, :]
-#     λ = jnp.array([λ_init])
+def run_mpc(x_init, u_R_init, b_init, λ_init, w, mpc_steps):
+    x = x_init[jnp.newaxis, :]
+    u_R = u_R_init[0]
+    b = b_init[jnp.newaxis, :]
+    λ = jnp.array([λ_init])
 
-#     x_0 = x_init
-#     b_0 = b_init
-#     u_R_init = u_R_init
-#     λ_0 = λ_init
-#     solve_for_u_R_jit = jax.jit(solve_for_u_R)
-#     eval_x_jit = jax.jit(eval_x)
-#     eval_b_t_jit = jax.jit(eval_b_t)
-#     update_λ_jit = jax.jit(update_λ)
-#     # update_λ_jit = update_λ  # temporary
-#     for t in range(mpc_steps):
-#         time_start = time.time()
-#         u_R_0 = solve_for_u_R_jit(x_0, u_R_init, b_0, λ_0)[0][-1]
-#         x_1 = eval_x_jit(
-#             x_0, u_R_0[jnp.newaxis, 0], params_true, w[jnp.newaxis, t]
-#         )
-#         x = jnp.concatenate([x, x_1[jnp.newaxis, 1]], axis=0)
-#         if t == 0:
-#             u_R = u_R_0[jnp.newaxis, 0]
-#         else:
-#             u_R = jnp.concatenate([u_R, u_R_0[jnp.newaxis, 0]], axis=0)
-#         b_1 = eval_b_t_jit(
-#             x, u_R, b_0
-#         )  # All this would be scannable except for this
-#         b = jnp.concatenate([b, b_1[jnp.newaxis, :]], axis=0)  # fix this
-#         λ_1 = update_λ_jit(b_0, b_1, λ_0)
-#         λ = jnp.append(λ, λ_1)
+    x_0 = x_init
+    b_0 = b_init
+    u_R_init = u_R_init
+    λ_0 = λ_init
+    solve_for_u_R_jit = jax.jit(solve_for_u_R)
+    eval_x_jit = jax.jit(eval_x)
+    eval_b_t_jit = jax.jit(eval_b_t)
+    update_λ_jit = jax.jit(update_λ)
+    for t in range(mpc_steps):
+        time_start = time.time()
+        u_R_0 = solve_for_u_R_jit(x_0, u_R_init, b_0, λ_0)[0][-1]
+        x_1 = eval_x_jit(
+            x_0, u_R_0[jnp.newaxis, 0], params_true, w[jnp.newaxis, t]
+        )
+        x = jnp.concatenate([x, x_1[jnp.newaxis, 1]], axis=0)
+        if t == 0:
+            u_R = u_R_0[jnp.newaxis, 0]
+        else:
+            u_R = jnp.concatenate([u_R, u_R_0[jnp.newaxis, 0]], axis=0)
+        b_1 = eval_b_t_jit(
+            x, u_R, b_0
+        )  # All this would be scannable except for this line
+        b = jnp.concatenate([b, b_1[jnp.newaxis, :]], axis=0)  # fix this
+        λ_1 = update_λ_jit(b_0, b_1, λ_0)
+        λ = jnp.append(λ, λ_1)
 
-#         x_0 = x_1[-1]
-#         b_0 = b_1
-#         u_R_init = u_R
-#         λ_0 = λ_1
+        x_0 = x_1[-1]
+        b_0 = b_1
+        u_R_init = u_R_0
+        λ_0 = λ_1
 
-#         print(f"Step {t}: {time.time() - time_start:.2f}s, λ_1: {λ_1:.3f}")
+        print(f"Step {t}: {time.time() - time_start:.2f}s, λ_1: {λ_1:.3f}")
 
-#     return x, u_R, b, λ
-
-
-# mpc_results = run_mpc(x_0, u_R_init, b_init, λ_init, sampled_w, mpc_steps)
-
-# First try at a version of the MPC loop that uses jax.lax.scan
-# def step_mpc_scan(carry, w_t):
-#     x, u_R_init, b_0, λ, t = carry
-#     u_R = solve_for_u_R(x[t], u_R_init, b_0, λ)[0][-1]
-#     x_1 = eval_x(
-#         x[t], u_R[0][jnp.newaxis, :], params_true, w_t[jnp.newaxis, :]
-#     )
-#     x_new = x.at[t + 1].set(x_1[-1])
-#     b_1 = eval_b_t(x_new[: t + 2], u_R, b_0)
-#     λ = update_λ(b_0, b_1, λ)
-
-#     return (x_new, u_R, b_1, λ, t + 1), (x_1, u_R, b_1, λ)
+    return x, u_R, b, λ
 
 
-# mpc_results = jax.lax.scan(
-#     step_mpc_scan,
-#     (x, u_R_init, b_0, λ_0, 0),
-#     sampled_w,
-# )
+x, u_R, b, λ = run_mpc(x_0, u_R_init, b_init, λ_init, sampled_w, mpc_steps)
 
 # Process the final trajectory
-descent_trajectory = solve_for_u_R(x_0, u_R_init, b_init, λ_init)
-start = time.time()
-u_R_descent = descent_trajectory[0]
-u_R_descent = jnp.concatenate(
-    [u_R_init[jnp.newaxis, :, :], u_R_descent], axis=0
-)
-J_descent = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
-    x_0, u_R_descent, b_init, λ_init
-)
-u_R_final = u_R_descent[-1]
-x_trajectory = jax.jit(eval_E_x)(
-    x_0, u_R_final, b_init, params_true
-)  # this is expected. Not actual.
-u_H_trajectory = jax.jit(eval_u_H)(x_trajectory[:-1], params_true)
-u_trajectory = jnp.concatenate([u_R_final, u_H_trajectory], axis=1)
-eval_b_t_jit = jax.jit(eval_b_t)
-b_trajectory = [
-    eval_b_t_jit(x_trajectory[: t + 1], u_trajectory[: t + 1], b_init)
-    for t in range(horizon + 1)
-]
-h_trajectory = jax.vmap(eval_H)(jnp.array(b_trajectory))
-
-print(f"Processing time taken: {time.time() - start}")
+h = jax.vmap(eval_H)(jnp.array(b))
 
 # Visualization
 import matplotlib.pyplot as plt
-
-
-# Gradient descent norm
-fig, ax = plt.subplots(1, 1)
-ax.plot(descent_trajectory[1])
-ax.set_ylabel("Norm grad J wrt u^R")
-fig.savefig("figures/grad_norm.png")
 
 # Robot and human position
 # Subplot 1: Robot and human positions
 # Subplot 2: Robot and human controls
 # Subplot 3: Belief over time
 # Subplot 4: Belief entropy
+# Subplot 5: lambda over time
 
 # x-axis position, y-axis time
-time_vec = jnp.arange(horizon + 1) * dt
-fig, ax = plt.subplots(4, 1)
-ax[0].plot(time_vec, x_trajectory[:, 0], label="Robot")
-ax[0].plot(time_vec, x_trajectory[:, 2], label="Human")
+fig, ax = plt.subplots(5, 1, figsize=(8, 8))
+time_vec = jnp.arange(mpc_steps + 1) * dt
+ax[0].plot(time_vec, x[:, 0], label="Robot")
+ax[0].plot(time_vec, x[:, 2], label="Human")
 ax[0].set_ylabel("Position [m]")
 ax[0].legend()
 ax[0].tick_params(
@@ -493,10 +444,8 @@ ax[0].tick_params(
     labelbottom=False,
 )
 
-ax[1].plot(time_vec[:-1], u_R_final, label="Robot")
-ax[1].plot(
-    time_vec[:-1], eval_u_H(x_trajectory[:-1], params_true), label="Human"
-)
+ax[1].plot(time_vec[:-1], u_R, label="Robot")
+ax[1].plot(time_vec[:-1], eval_u_H(x[:-1], params_true), label="Human")
 ax[1].set_ylabel("Control [m/s^2]")
 ax[1].tick_params(
     axis="x",
@@ -506,7 +455,7 @@ ax[1].tick_params(
     labelbottom=False,
 )
 
-for t, belief in zip(time_vec, b_trajectory):
+for t, belief in zip(time_vec, b):
     for i, belief_value in enumerate(belief):
         ax[2].scatter(
             t,
@@ -525,10 +474,15 @@ ax[2].tick_params(
     labelbottom=False,
 )
 
-ax[3].plot(time_vec, h_trajectory)
+ax[3].plot(time_vec, h)
 ax[3].set_ylabel("Entropy")
 ax[3].set_xlabel("Time [s]")
-ax[3].set_ylim(bottom=0.0, top=max(h_trajectory) + 0.1)
+ax[3].set_ylim(bottom=0.0, top=max(h) + 0.1)
+
+ax[4].plot(time_vec, λ)
+ax[4].set_ylabel("Curiosity")
+ax[4].set_xlabel("Time [s]")
+ax[4].set_ylim(bottom=0.0, top=max(λ) + 0.1)
 
 fig.tight_layout()
 
