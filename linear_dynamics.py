@@ -15,9 +15,9 @@ from jax import numpy as jnp
 # Simulation parameters
 # TODO: Move these to a separate file
 thetas = jnp.array([[0.1], [1.0], [10.0]])
-b_0 = jnp.array([1 / len(thetas) for _ in thetas])
+b_init = jnp.array([1 / len(thetas) for _ in thetas])
 
-assert sum(b_0) == 1.0, "Initial belief must sum to 1.0"
+assert sum(b_init) == 1.0, "Initial belief must sum to 1.0"
 
 # System dynamics: 1D double integrator.
 # Two agents: robot and human.
@@ -28,7 +28,7 @@ A_single = jnp.array([[1.0, dt], [0.0, 1.0]])
 B_single = jnp.array([[0.5 * dt**2], [dt]])
 A = jnp.block([[A_single, jnp.zeros((2, 2))], [jnp.zeros((2, 2)), A_single]])
 B = jnp.block([[B_single, jnp.zeros((2, 1))], [jnp.zeros((2, 1)), B_single]])
-Sigma = w_scale * jnp.eye(4)
+Sigma = w_scale * jnp.eye(len(x_0))
 
 
 # Cost
@@ -42,8 +42,11 @@ def terminal_cost(x_T):
     return jnp.dot(x_R_T, x_R_T)
 
 
-def step_dynamics(x_t: jnp.ndarray, u_t: jnp.ndarray) -> jnp.ndarray:
-    return A @ x_t + B @ u_t
+def step_dynamics(x_t: jnp.ndarray, u_t: jnp.ndarray, w_t=None) -> jnp.ndarray:
+    if w_t is None:
+        return A @ x_t + B @ u_t
+    else:
+        return A @ x_t + B @ u_t + w_t
 
 
 def eval_J_r(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
@@ -81,6 +84,8 @@ def eval_J_i(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     Outputs:
     - J_i: entropy of the belief at time T
     """
+    x = x[:-2]
+    u = u[:-2]
     return eval_H(eval_b_t(x, u, b_0))
 
 
@@ -175,27 +180,29 @@ def eval_E_u_H(x: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
 
 
 def eval_x(
-    x_0: jnp.ndarray, u_R: jnp.ndarray, theta: jnp.ndarray
+    x_0: jnp.ndarray, u_R: jnp.ndarray, theta: jnp.ndarray, w: jnp.ndarray
 ) -> jnp.ndarray:
-    """Compute the state trajectory given init. state, parameters, and robot
-    controls
+    """Compute the state trajectory given init. state, robot controls, human
+    control parameters, and noise.
 
     Inputs:
     - x_0: initial state
     - u_R: robot controls (u_0, u_1, ..., u_{t-1})
     - theta: human control parameters
+    - w: noise trajectory (w_0, w_1, ..., w_{t-1})
 
     Outputs:
     - x: state trajectory (x_0, x_1, ..., x_{t})
     """
 
-    def step_dynamics_scan(x_t, u_R_t):
+    def step_dynamics_scan(x_t, control_and_noise):
+        u_R_t, w_t = control_and_noise
         u_H_t = eval_u_H_t(x_t, theta)
         u_t = jnp.concatenate([u_R_t, u_H_t])
-        x_t_plus_1 = step_dynamics(x_t, u_t)
+        x_t_plus_1 = step_dynamics(x_t, u_t, w_t=w_t)
         return x_t_plus_1, x_t_plus_1
 
-    x_trajectory, x = jax.lax.scan(step_dynamics_scan, x_0, u_R)
+    x_trajectory, x = jax.lax.scan(step_dynamics_scan, x_0, (u_R, w))
     return jnp.stack([x_0, *x])
 
 
@@ -208,9 +215,14 @@ def eval_E_x(
     - x_0: state at time 0
     - b_0: belief at time 0
     - u_R: set of robot controls (u_0, u_1, ..., u_{t-1})
+    - theta: human control parameters (optional)
 
     Outputs:
     - E_x: expected states (x_0, E[x_1], ..., E[x_{t}])
+
+    Note: If theta is given, this is the expected control given the noise
+    model. If theta is not given, this is the expected control given the noise
+    model AND the belief over the human control parameters.
     """
 
     def step_dynamics_scan(x_t, u_R_t):
@@ -250,7 +262,9 @@ def eval_b_t(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
         u_R = u[:, 0]  # TODO make this more general for higher dim inputs
         if u_R.ndim == 1:
             u_R = u_R[:, jnp.newaxis]
-        xs = jax.vmap(eval_x, in_axes=(None, None, 0))(x[0], u_R, thetas)
+        xs = jax.vmap(eval_E_x, in_axes=(None, None, None, 0))(
+            x[0], u_R, b_0, thetas
+        )
         u_Hs = jax.vmap(eval_u_H, in_axes=(0, 0))(xs, thetas)
         us = jax.vmap(lambda u_H: jnp.concatenate([u_R, u_H[:-1]], axis=1))(
             u_Hs
@@ -311,10 +325,12 @@ def transition_model(x_query: jnp.ndarray, x: jnp.ndarray, u: jnp.ndarray):
 # Sim parameters
 horizon = 7  # time horizon. Control inputs are u_0, u_1, ..., u_{horizon-1}
 u_R_init = jnp.array([[0.0] for _ in range(horizon)])  # init guess for u_R
-λ_0 = 1.0  # curiosity parameter
+λ_init = 0.0  # curiosity parameter
+λ_scale = 0.001  # curiosity parameter scaling factor
 learning_rate = 0.1
 descent_steps = 200
 mpc_steps = 10
+rng_key = jax.random.PRNGKey(0)
 
 num_points = 30
 axis_limit = 50.0
@@ -323,15 +339,20 @@ epsilon_cost = 0.0  # so that track is above surface
 max_marker_size = 200
 params_true = thetas[1]
 
-# Gradient descent wrt u_R (give \lambda)
+# MPC loop
 import time
 
 eval_E_J_jit = jax.jit(eval_E_J)
+sampled_w = jax.random.multivariate_normal(
+    rng_key, jnp.zeros(len(x_0)), Sigma, (horizon,)
+)
 
 
-def solve_for_u_R(u_R, λ):
+def solve_for_u_R(x_0, u_R_init, b, λ):
+    # Note: Return last element of descent_trajectory instead of the whole for
+    # efficiency gains
     def grad_descent_scan(u_R, _):
-        grad = jax.grad(eval_E_J_jit, argnums=1)(x_0, u_R, b_0, λ_0)
+        grad = jax.grad(eval_E_J_jit, argnums=1)(x_0, u_R, b, λ)
         u_R_new = u_R - learning_rate * grad
         return u_R_new, (u_R_new, jnp.linalg.norm(grad))
 
@@ -341,26 +362,100 @@ def solve_for_u_R(u_R, λ):
     return descent_trajectory
 
 
-start = time.time()
-descent_trajectory = solve_for_u_R(u_R_init, λ_0)
-print(f"Gradient descent time taken: {time.time() - start}")
+# def update_λ(b_0, b_1, λ):
+#     ΔH = eval_H(b_1) - eval_H(b_0)
+#     return jax.lax.cond(
+#         ΔH > 0.0,
+#         lambda λ: λ + λ_scale * ΔH,
+#         lambda λ: jnp.clip(λ - λ_scale * ΔH, 0.0, None),
+#         λ,
+#     )
+
+
+# def run_mpc(x_init, u_R_init, b_init, λ_init, w, mpc_steps):
+#     x = x_init[jnp.newaxis, :]
+#     u_R = u_R_init[0]
+#     b = b_init[jnp.newaxis, :]
+#     λ = jnp.array([λ_init])
+
+#     x_0 = x_init
+#     b_0 = b_init
+#     u_R_init = u_R_init
+#     λ_0 = λ_init
+#     solve_for_u_R_jit = jax.jit(solve_for_u_R)
+#     eval_x_jit = jax.jit(eval_x)
+#     eval_b_t_jit = jax.jit(eval_b_t)
+#     update_λ_jit = jax.jit(update_λ)
+#     # update_λ_jit = update_λ  # temporary
+#     for t in range(mpc_steps):
+#         time_start = time.time()
+#         u_R_0 = solve_for_u_R_jit(x_0, u_R_init, b_0, λ_0)[0][-1]
+#         x_1 = eval_x_jit(
+#             x_0, u_R_0[jnp.newaxis, 0], params_true, w[jnp.newaxis, t]
+#         )
+#         x = jnp.concatenate([x, x_1[jnp.newaxis, 1]], axis=0)
+#         if t == 0:
+#             u_R = u_R_0[jnp.newaxis, 0]
+#         else:
+#             u_R = jnp.concatenate([u_R, u_R_0[jnp.newaxis, 0]], axis=0)
+#         b_1 = eval_b_t_jit(
+#             x, u_R, b_0
+#         )  # All this would be scannable except for this
+#         b = jnp.concatenate([b, b_1[jnp.newaxis, :]], axis=0)  # fix this
+#         λ_1 = update_λ_jit(b_0, b_1, λ_0)
+#         λ = jnp.append(λ, λ_1)
+
+#         x_0 = x_1[-1]
+#         b_0 = b_1
+#         u_R_init = u_R
+#         λ_0 = λ_1
+
+#         print(f"Step {t}: {time.time() - time_start:.2f}s, λ_1: {λ_1:.3f}")
+
+#     return x, u_R, b, λ
+
+
+# mpc_results = run_mpc(x_0, u_R_init, b_init, λ_init, sampled_w, mpc_steps)
+
+# First try at a version of the MPC loop that uses jax.lax.scan
+# def step_mpc_scan(carry, w_t):
+#     x, u_R_init, b_0, λ, t = carry
+#     u_R = solve_for_u_R(x[t], u_R_init, b_0, λ)[0][-1]
+#     x_1 = eval_x(
+#         x[t], u_R[0][jnp.newaxis, :], params_true, w_t[jnp.newaxis, :]
+#     )
+#     x_new = x.at[t + 1].set(x_1[-1])
+#     b_1 = eval_b_t(x_new[: t + 2], u_R, b_0)
+#     λ = update_λ(b_0, b_1, λ)
+
+#     return (x_new, u_R, b_1, λ, t + 1), (x_1, u_R, b_1, λ)
+
+
+# mpc_results = jax.lax.scan(
+#     step_mpc_scan,
+#     (x, u_R_init, b_0, λ_0, 0),
+#     sampled_w,
+# )
 
 # Process the final trajectory
+descent_trajectory = solve_for_u_R(x_0, u_R_init, b_init, λ_init)
 start = time.time()
 u_R_descent = descent_trajectory[0]
 u_R_descent = jnp.concatenate(
     [u_R_init[jnp.newaxis, :, :], u_R_descent], axis=0
 )
 J_descent = jax.vmap(eval_E_J_jit, in_axes=(None, 0, None, None))(
-    x_0, u_R_descent, b_0, λ_0
+    x_0, u_R_descent, b_init, λ_init
 )
 u_R_final = u_R_descent[-1]
-x_trajectory = jax.jit(eval_x)(x_0, u_R_final, params_true)
+x_trajectory = jax.jit(eval_E_x)(
+    x_0, u_R_final, b_init, params_true
+)  # this is expected. Not actual.
 u_H_trajectory = jax.jit(eval_u_H)(x_trajectory[:-1], params_true)
 u_trajectory = jnp.concatenate([u_R_final, u_H_trajectory], axis=1)
 eval_b_t_jit = jax.jit(eval_b_t)
 b_trajectory = [
-    eval_b_t_jit(x_trajectory[: t + 1], u_trajectory[: t + 1], b_0)
+    eval_b_t_jit(x_trajectory[: t + 1], u_trajectory[: t + 1], b_init)
     for t in range(horizon + 1)
 ]
 h_trajectory = jax.vmap(eval_H)(jnp.array(b_trajectory))
