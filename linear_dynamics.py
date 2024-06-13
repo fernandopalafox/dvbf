@@ -1,4 +1,6 @@
 import jax
+import optax
+
 from jax import numpy as jnp
 
 # jax.config.update("jax_disable_jit", True)
@@ -84,8 +86,6 @@ def eval_J_i(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     Outputs:
     - J_i: entropy of the belief at time T
     """
-    x = x[:-2]
-    u = u[:-2]
     return eval_H(eval_b_t(x, u, b_0))
 
 
@@ -108,7 +108,7 @@ def eval_E_J(
     E_x = eval_E_x(x_0, u_R, b_0)
     E_u_H = eval_E_u_H(E_x, thetas)
     E_u = jnp.concatenate([u_R, E_u_H[:-1]], axis=1)
-    return (1 - λ) * eval_J_r(E_x, E_u) + λ * eval_J_i(E_x, E_u, b_0)
+    return eval_J_r(E_x, E_u) + λ * eval_J_i(E_x, E_u, b_0)
 
 
 def eval_u_H(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
@@ -326,9 +326,10 @@ def transition_model(x_query: jnp.ndarray, x: jnp.ndarray, u: jnp.ndarray):
 horizon = 7  # time horizon. Control inputs are u_0, u_1, ..., u_{horizon-1}
 u_R_init = jnp.array([[0.0] for _ in range(horizon)])  # init guess for u_R
 λ_init = 0.0  # curiosity parameter
-λ_scale = 0.1  # curiosity parameter scaling factor
-learning_rate = 0.0001
-descent_steps = 200
+λ_scale = 1.0  # curiosity parameter scaling factor
+learning_rate = 0.001
+optimizer = optax.adam(learning_rate)
+descent_steps = 600
 mpc_steps = 10
 rng_key = jax.random.PRNGKey(0)
 
@@ -351,13 +352,16 @@ sampled_w = jax.random.multivariate_normal(
 def solve_for_u_R(x_0, u_R_init, b, λ):
     # Note: Return last element of descent_trajectory instead of the whole for
     # efficiency gains
-    def grad_descent_scan(u_R, _):
+    def grad_descent_scan(carry, _):
+        u_R, opt_state = carry
         grad = jax.grad(eval_E_J_jit, argnums=1)(x_0, u_R, b, λ)
-        u_R_new = u_R - learning_rate * grad
-        return u_R_new, (u_R_new, jnp.linalg.norm(grad))
+        updates, opt_state = optimizer.update(grad, opt_state)
+        u_R_new = optax.apply_updates(u_R, updates)
+        return (u_R_new, opt_state), (u_R_new, jnp.linalg.norm(grad))
 
+    opt_state = optimizer.init(u_R_init)
     _, descent_trajectory = jax.lax.scan(
-        grad_descent_scan, u_R_init, jnp.arange(descent_steps)
+        grad_descent_scan, (u_R_init, opt_state), jnp.arange(descent_steps)
     )
     return descent_trajectory
 
@@ -367,7 +371,7 @@ def update_λ(b_0, b_1, λ):
     return jax.lax.cond(
         ΔH > 0.0,
         lambda λ: λ + λ_scale * ΔH,
-        lambda λ: jnp.clip(λ - λ_scale * ΔH, 0.0, None),
+        lambda λ: jnp.clip(λ - λ_scale, 0.0, None),
         λ,
     )
 
@@ -388,6 +392,9 @@ def run_mpc(x_init, u_R_init, b_init, λ_init, w, mpc_steps):
     update_λ_jit = jax.jit(update_λ)
     for t in range(mpc_steps):
         time_start = time.time()
+        optimization_results = solve_for_u_R_jit(x_0, u_R_init, b_0, λ_0)
+        u_R_0 = optimization_results[0][-1]
+        final_grad_norm = optimization_results[1][-1]
         u_R_0 = solve_for_u_R_jit(x_0, u_R_init, b_0, λ_0)[0][-1]
         x_1 = eval_x_jit(
             x_0, u_R_0[jnp.newaxis, 0], params_true, w[jnp.newaxis, t]
@@ -409,7 +416,10 @@ def run_mpc(x_init, u_R_init, b_init, λ_init, w, mpc_steps):
         u_R_init = u_R_0
         λ_0 = λ_1
 
-        print(f"Step {t}: {time.time() - time_start:.2f}s, λ_1: {λ_1:.3f}")
+        print(
+            f"{t}:{time.time() - time_start:.2f}s, "
+            f"λ_1:{λ_1:.3f}, grad norm:{final_grad_norm:.3f}"
+        )
 
     return x, u_R, b, λ
 
@@ -456,6 +466,7 @@ ax[1].tick_params(
 )
 
 for t, belief in zip(time_vec, b):
+    belief = belief / jnp.sum(belief)  # Shouldn't be necessary
     for i, belief_value in enumerate(belief):
         ax[2].scatter(
             t,
