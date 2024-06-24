@@ -20,7 +20,7 @@ class InitialNetwork(nn.Module):
         input = nn.relu(input)
         params = nn.Dense(2 * self.latent_dim)(input)
         mean, logvar = jnp.split(params, 2, axis=-1)
-        return mean, jnp.exp(logvar)
+        return mean, logvar
 
 
 class InitialTransition(nn.Module):
@@ -57,8 +57,8 @@ class Recognition(nn.Module):
         input = nn.Dense(128)(input)
         input = nn.relu(input)
         params = nn.Dense(2 * self.latent_dim)(input)
-        mean, logvar = jnp.split(params, 2, axis=-1)
-        return mean, jnp.exp(logvar)
+        w_mean, w_logvar = jnp.split(params, 2, axis=-1)
+        return w_mean, w_logvar
 
 
 class Transition(nn.Module):
