@@ -151,13 +151,14 @@ class DVBF(nn.Module):
             x_mean = observation(z_t_plus_one)
             xs_reconstructed.append(x_mean)
 
-        zs = jnp.vstack(zs)
-        xs_reconstructed = jnp.vstack(xs_reconstructed)
+        zs = jnp.stack(zs)
+        xs_reconstructed = jnp.stack(xs_reconstructed)
 
         return zs, xs_reconstructed
 
 
 # Example usage
+num_batches = 10
 latent_dim = 3
 obs_dim = 16**2
 control_dim = 1
@@ -169,8 +170,8 @@ model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
 
 # Initialize model
 key, subkey = jax.random.split(rng_key, 2)
-xs = jax.random.normal(key, (1, sequence_length, obs_dim))
-us = jax.random.normal(key, (1, sequence_length - 1, control_dim))
+xs = jax.random.normal(key, (num_batches, sequence_length, obs_dim))
+us = jax.random.normal(key, (num_batches, sequence_length - 1, control_dim))
 params = model.init(
     {
         "params": key,
