@@ -47,3 +47,20 @@ class Recognition(nn.Module):
         params = nn.Dense(2 * self.latent_dim)(input)
         mean, logvar = jnp.split(params, 2, axis=-1)
         return mean, jnp.exp(logvar)
+
+
+class Transition(nn.Module):
+    latent_dim: int
+    num_matrices: int
+
+    @nn.compact
+    def __call__(self, z_t, u_t):
+        # 16 softmax output
+        input = jnp.concatenate([z_t, u_t], axis=-1)
+        alphas = nn.Dense(
+            self.num_matrices,
+            use_bias=False,
+            kernel_init=nn.initializers.normal(0.01),
+        )(input)
+        alphas = nn.softmax(alphas)
+        return alphas
