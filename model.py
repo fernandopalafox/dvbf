@@ -33,3 +33,17 @@ class Observation(nn.Module):
         x = nn.relu(x)
         mean = nn.Dense(self.obs_dim)(x)
         return mean
+
+
+class Recognition(nn.Module):
+    latent_dim: int
+
+    @nn.compact
+    def __call__(self, z_t, x_t_plus_one, u_t):
+        # 128 ReLU + 2 * latent_dim output
+        input = jnp.concatenate([z_t, x_t_plus_one, u_t], axis=-1)
+        x = nn.Dense(128)(input)
+        x = nn.relu(x)
+        params = nn.Dense(2 * self.latent_dim)(x)
+        mean, logvar = jnp.split(params, 2, axis=-1)
+        return mean, jnp.exp(logvar)
