@@ -23,6 +23,18 @@ class InitialNetwork(nn.Module):
         return mean, jnp.exp(logvar)
 
 
+class InitialTransition(nn.Module):
+    latent_dim: int
+
+    @nn.compact
+    def __call__(self, w_1):
+        # 128 ReLU + latent_dim output
+        input = nn.Dense(128)(w_1)
+        input = nn.relu(input)
+        z_1 = nn.Dense(self.latent_dim)(input)
+        return z_1
+
+
 class Observation(nn.Module):
     obs_dim: int
 
