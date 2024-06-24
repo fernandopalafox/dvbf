@@ -10,9 +10,9 @@ class InitialNetwork(nn.Module):
     @nn.compact
     def __call__(self, xs):
         # Simple LSTM network
+        xs = jnp.transpose(xs, (1, 0, 2))  # (T, B, D)
         lstm = nn.OptimizedLSTMCell(128)
-        x_seq = jnp.transpose(x_seq, (1, 0, 2))  # (T, B, D)
-        _, lstm_state = nn.RNN(lstm)(x_seq)
+        _, lstm_state = nn.RNN(lstm)(xs)
         output = lstm_state.hidden
 
         # Output mean and logvar for w_1
@@ -20,7 +20,7 @@ class InitialNetwork(nn.Module):
         x = nn.relu(x)
         params = nn.Dense(2 * self.latent_dim)(x)
         mean, logvar = jnp.split(params, 2, axis=-1)
-        return mean, logvar
+        return mean, jnp.exp(logvar)
 
 
 class Observation(nn.Module):
