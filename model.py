@@ -13,12 +13,12 @@ class InitialNetwork(nn.Module):
         xs = jnp.transpose(xs, (1, 0, 2))  # (T, B, D)
         lstm = nn.OptimizedLSTMCell(128)
         _, lstm_state = nn.RNN(lstm)(xs)
-        output = lstm_state.hidden
+        lstm_output = lstm_state.hidden
 
         # Output mean and logvar for w_1
-        x = nn.Dense(128)(output)
-        x = nn.relu(x)
-        params = nn.Dense(2 * self.latent_dim)(x)
+        input = nn.Dense(128)(lstm_output)
+        input = nn.relu(input)
+        params = nn.Dense(2 * self.latent_dim)(input)
         mean, logvar = jnp.split(params, 2, axis=-1)
         return mean, jnp.exp(logvar)
 
@@ -42,8 +42,8 @@ class Recognition(nn.Module):
     def __call__(self, z_t, x_t_plus_one, u_t):
         # 128 ReLU + 2 * latent_dim output
         input = jnp.concatenate([z_t, x_t_plus_one, u_t], axis=-1)
-        x = nn.Dense(128)(input)
-        x = nn.relu(x)
-        params = nn.Dense(2 * self.latent_dim)(x)
+        input = nn.Dense(128)(input)
+        input = nn.relu(input)
+        params = nn.Dense(2 * self.latent_dim)(input)
         mean, logvar = jnp.split(params, 2, axis=-1)
         return mean, jnp.exp(logvar)
