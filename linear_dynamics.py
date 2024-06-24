@@ -25,7 +25,7 @@ assert sum(b_init) == 1.0, "Initial belief must sum to 1.0"
 # Two agents: robot and human.
 x_0 = jnp.array([-1.0, 0.0, -3.0, 0.0])
 dt = 1.0
-w_scale = 0.1
+w_scale = 0.5
 A_single = jnp.array([[1.0, dt], [0.0, 1.0]])
 B_single = jnp.array([[0.5 * dt**2], [dt]])
 A = jnp.block([[A_single, jnp.zeros((2, 2))], [jnp.zeros((2, 2)), A_single]])
@@ -34,16 +34,20 @@ Sigma = w_scale * jnp.eye(len(x_0))
 
 
 # Cost
+@jax.jit
 def stage_cost(x_t, u_t):
     u_R_t = u_t[0]
+    x_R_t = x_t[0]
     return jnp.dot(u_R_t, u_R_t)
 
 
+@jax.jit
 def terminal_cost(x_T):
     x_R_T = x_T[0]
     return jnp.dot(x_R_T, x_R_T)
 
 
+@jax.jit
 def step_dynamics(x_t: jnp.ndarray, u_t: jnp.ndarray, w_t=None) -> jnp.ndarray:
     if w_t is None:
         return A @ x_t + B @ u_t
@@ -51,6 +55,7 @@ def step_dynamics(x_t: jnp.ndarray, u_t: jnp.ndarray, w_t=None) -> jnp.ndarray:
         return A @ x_t + B @ u_t + w_t
 
 
+@jax.jit
 def eval_J_r(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     """Evaluate the robot cost given initial state and robot controls
     Inputs:
@@ -70,11 +75,13 @@ def eval_J_r(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     )
 
 
+@jax.jit
 def eval_H(b: jnp.ndarray) -> jnp.ndarray:
     """Shannon entropy of a belief vector b"""
     return -jnp.sum(b * jnp.log(b + 1e-8))  # avoid log(0) = -inf
 
 
+@jax.jit
 def eval_J_i(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     """Evaluate the information cost given the state and control trajectories
     and initial belief.
@@ -89,6 +96,7 @@ def eval_J_i(x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     return eval_H(eval_b_t(x, u, b_0))
 
 
+@jax.jit
 def eval_E_J(
     x_0: jnp.ndarray, u_R: jnp.ndarray, b_0: jnp.ndarray, λ: float
 ) -> jnp.ndarray:
@@ -111,6 +119,7 @@ def eval_E_J(
     return eval_J_r(E_x, E_u) + λ * eval_J_i(E_x, E_u, b_0)
 
 
+@jax.jit
 def eval_u_H(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
     """Returns human controls given states and a vector of parameters
     theta
@@ -129,6 +138,7 @@ def eval_u_H(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
         return jax.vmap(eval_u_H_t, in_axes=(0, None))(x, theta)
 
 
+@jax.jit
 def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
     """Returns a human at time t given a state and a vector of
     parameters theta
@@ -154,6 +164,7 @@ def eval_u_H_t(x_t: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
     )
 
 
+@jax.jit
 def eval_E_u_H(x: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     """Returns the expected human controls given states and a belief
 
@@ -179,6 +190,7 @@ def eval_E_u_H(x: jnp.ndarray, b_0: jnp.ndarray) -> jnp.ndarray:
     )[0]
 
 
+@jax.jit
 def eval_x(
     x_0: jnp.ndarray, u_R: jnp.ndarray, theta: jnp.ndarray, w: jnp.ndarray
 ) -> jnp.ndarray:
@@ -206,6 +218,7 @@ def eval_x(
     return jnp.stack([x_0, *x])
 
 
+@jax.jit
 def eval_E_x(
     x_0: jnp.ndarray, u_R: jnp.ndarray, b_0: jnp.ndarray, theta=None
 ) -> jnp.ndarray:
@@ -238,6 +251,7 @@ def eval_E_x(
     return jnp.stack([x_0, *E_x])
 
 
+@jax.jit
 def eval_b_t(
     x: jnp.ndarray, u: jnp.ndarray, b_0: jnp.ndarray, xs=None, us=None
 ) -> jnp.ndarray:
@@ -286,6 +300,7 @@ def eval_b_t(
         return b_t
 
 
+@jax.jit
 def transition_model(x_query: jnp.ndarray, x: jnp.ndarray, u: jnp.ndarray):
     """Return the probability of transitioning to x_query given x and u
 
@@ -336,9 +351,9 @@ u_R_init = jnp.array([[0.0] for _ in range(horizon)])  # init guess for u_R
 λ_scale = 1.0  # curiosity parameter scaling factor
 learning_rate = 0.001
 optimizer = optax.adam(learning_rate)
-descent_steps = 600
+descent_steps = 1000
 mpc_steps = 10
-rng_key = jax.random.PRNGKey(0)
+rng_key = jax.random.PRNGKey(1)
 
 num_points = 30
 axis_limit = 50.0
@@ -423,15 +438,19 @@ def run_mpc(x_init, u_R_init, b_init, λ_init, w, mpc_steps):
         u_R_init = u_R_0
         λ_0 = λ_1
 
-        print(
-            f"{t}:{time.time() - time_start:.2f}s, "
-            f"λ_1:{λ_1:.3f}, grad norm:{final_grad_norm:.3f}"
-        )
+        # print(
+        #     f"{t}:{time.time() - time_start:.2f}s, "
+        #     f"λ_1:{λ_1:.3f}, grad norm:{final_grad_norm:.3f}"
+        # )
 
     return x, u_R, b, λ
 
 
-x, u_R, b, λ = run_mpc(x_0, u_R_init, b_init, λ_init, sampled_w, mpc_steps)
+# x, u_R, b, λ = run_mpc(x_0, u_R_init, b_init, λ_init, sampled_w, mpc_steps)
+
+# # TEMPORARY: Profiling
+with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
+    x, u_R, b, λ = run_mpc(x_0, u_R_init, b_init, λ_init, sampled_w, 1)
 
 # Process the final trajectory
 h = jax.vmap(eval_H)(jnp.array(b))
