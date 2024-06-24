@@ -13,9 +13,9 @@ class InitialNetwork(nn.Module):
         lstm_output = nn.RNN(nn.OptimizedLSTMCell(128))(xs)
 
         # Output mean and logvar for w_1
-        input = nn.Dense(128)(lstm_output[:, -1])
-        input = nn.relu(input)
-        params = nn.Dense(2 * self.latent_dim)(input)
+        out = nn.Dense(128)(lstm_output[:, -1])
+        out = nn.relu(out)
+        params = nn.Dense(2 * self.latent_dim)(out)
         mean, logvar = jnp.split(params, 2, axis=-1)
         return mean, logvar
 
@@ -26,9 +26,9 @@ class InitialTransition(nn.Module):
     @nn.compact
     def __call__(self, w_1):
         # 128 ReLU + latent_dim output
-        input = nn.Dense(128)(w_1)
-        input = nn.relu(input)
-        z_1 = nn.Dense(self.latent_dim)(input)
+        out = nn.Dense(128)(w_1)
+        out = nn.relu(out)
+        z_1 = nn.Dense(self.latent_dim)(out)
         return z_1
 
 
@@ -50,10 +50,10 @@ class Recognition(nn.Module):
     @nn.compact
     def __call__(self, z_t, x_t_plus_one, u_t):
         # 128 ReLU + 2 * latent_dim output
-        input = jnp.concatenate([z_t, x_t_plus_one, u_t], axis=-1)
-        input = nn.Dense(128)(input)
-        input = nn.relu(input)
-        params = nn.Dense(2 * self.latent_dim)(input)
+        out = jnp.concatenate([z_t, x_t_plus_one, u_t], axis=-1)
+        out = nn.Dense(128)(out)
+        out = nn.relu(out)
+        params = nn.Dense(2 * self.latent_dim)(out)
         w_mean, w_logvar = jnp.split(params, 2, axis=-1)
         return w_mean, w_logvar
 
@@ -65,12 +65,12 @@ class TransitionWeights(nn.Module):
     @nn.compact
     def __call__(self, z_t, u_t):
         # 16 softmax output
-        input = jnp.concatenate([z_t, u_t], axis=-1)
+        out = jnp.concatenate([z_t, u_t], axis=-1)
         alphas = nn.Dense(
             self.num_matrices,
             use_bias=False,
             kernel_init=nn.initializers.normal(0.01),
-        )(input)
+        )(out)
         alphas = nn.softmax(alphas)
         return alphas
 
