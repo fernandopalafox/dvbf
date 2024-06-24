@@ -10,13 +10,10 @@ class InitialNetwork(nn.Module):
     @nn.compact
     def __call__(self, xs):
         # Simple LSTM network
-        xs = jnp.transpose(xs, (1, 0, 2))  # (T, B, D)
-        lstm = nn.OptimizedLSTMCell(128)
-        _, lstm_state = nn.RNN(lstm)(xs)
-        lstm_output = lstm_state.hidden
+        lstm_output = nn.RNN(nn.OptimizedLSTMCell(128))(xs)
 
         # Output mean and logvar for w_1
-        input = nn.Dense(128)(lstm_output)
+        input = nn.Dense(128)(lstm_output[:, -1])
         input = nn.relu(input)
         params = nn.Dense(2 * self.latent_dim)(input)
         mean, logvar = jnp.split(params, 2, axis=-1)
@@ -119,41 +116,75 @@ class DVBF(nn.Module):
         Cs = self.param(
             "C",
             nn.initializers.normal(0.01),
-            (self.num_matrices, self.obs_dim, self.latent_dim),
+            (self.num_matrices, self.latent_dim, self.latent_dim),
         )
 
         # Compute sequence of states
         zs = [z_1]
         xs_reconstructed = []
-        for t in range(xs.shape[0] - 1):
-            # Compute observation
-            x_mean = observation(zs[-1])
-            xs_reconstructed.append(x_mean)
+        for t in range(xs.shape[1] - 1):
+            zs_t = zs[-1]
+            xs_t_plus_one = xs[:, t + 1]
+            us_t = us[:, t]
 
             # Compute next latent state
             # Sample stochastic component
-            w_mean, w_logvar = recognition(zs[-1], xs[t + 1], us[t])
+            w_mean, w_logvar = recognition(zs_t, xs_t_plus_one, us_t)
             key = self.make_rng("rng_stream")
-            w = w_mean + jnp.exp(w_logvar / 2) * jax.random.normal(
+            w_t = w_mean + jnp.exp(w_logvar / 2) * jax.random.normal(
                 key, w_mean.shape
             )
             # Compute deterministic component
-            alphas = transition_weights(zs[-1], us[t])
+            alphas = transition_weights(zs_t, us_t)
             A_t = jnp.einsum("bi,ijk-> bjk", alphas, As)
             B_t = jnp.einsum("bi,ijk-> bjk", alphas, Bs)
             C_t = jnp.einsum("bi,ijk-> bjk", alphas, Cs)
             # Compute next latent state
             z_t_plus_one = (
-                jnp.einsum("bjk, bk -> bj", A_t, zs[-1])
-                + jnp.einsum("bjk, bk -> bj", B_t, us[t])
-                + jnp.einsum("bjk, bk -> bj", C_t, w)
+                jnp.einsum("bjk, bk -> bj", A_t, zs_t)
+                + jnp.einsum("bjk, bk -> bj", B_t, us_t)
+                + jnp.einsum("bjk, bk -> bj", C_t, w_t)
             )
             zs.append(z_t_plus_one)
 
             # Compute next observation
             x_mean = observation(z_t_plus_one)
+            xs_reconstructed.append(x_mean)
 
         zs = jnp.vstack(zs)
         xs_reconstructed = jnp.vstack(xs_reconstructed)
 
         return zs, xs_reconstructed
+
+
+# Example usage
+latent_dim = 3
+obs_dim = 16**2
+control_dim = 1
+num_matrices = 4
+sequence_length = 10
+rng_key = jax.random.PRNGKey(0)
+
+model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
+
+# Initialize model
+key, subkey = jax.random.split(rng_key, 2)
+xs = jax.random.normal(key, (1, sequence_length, obs_dim))
+us = jax.random.normal(key, (1, sequence_length - 1, control_dim))
+params = model.init(
+    {
+        "params": key,
+        "rng_stream": key,
+    },
+    xs,
+    us,
+)
+
+# Forward pass
+key_forward, subkey = jax.random.split(subkey)
+zs, xs_reconstructed = model.apply(
+    params, xs, us, rngs={"rng_stream": key_forward}
+)
+
+print("zs.shape:", zs.shape)
+print("xs_reconstructed.shape:", xs_reconstructed.shape)
