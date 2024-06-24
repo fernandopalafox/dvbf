@@ -61,7 +61,7 @@ class Recognition(nn.Module):
         return w_mean, w_logvar
 
 
-class Transition(nn.Module):
+class TransitionWeights(nn.Module):
     latent_dim: int
     num_matrices: int
 
