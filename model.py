@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import flax
 from flax import linen as nn
+import time
 
 
 class InitialNetwork(nn.Module):
@@ -166,9 +167,10 @@ num_matrices = 4
 sequence_length = 10
 rng_key = jax.random.PRNGKey(0)
 
-model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
 
 # Initialize model
+start_time = time.time()
+model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
 key, subkey = jax.random.split(rng_key, 2)
 xs = jax.random.normal(key, (num_batches, sequence_length, obs_dim))
 us = jax.random.normal(key, (num_batches, sequence_length - 1, control_dim))
@@ -180,12 +182,15 @@ params = model.init(
     xs,
     us,
 )
+print("Initialization time:", time.time() - start_time)
 
 # Forward pass
+start_time = time.time()
 key_forward, subkey = jax.random.split(subkey)
 zs, xs_reconstructed = model.apply(
     params, xs, us, rngs={"rng_stream": key_forward}
 )
+print("Forward pass time:", time.time() - start_time)
 
 print("zs.shape:", zs.shape)
 print("xs_reconstructed.shape:", xs_reconstructed.shape)
