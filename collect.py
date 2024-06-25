@@ -16,7 +16,7 @@ env = ResizePixelObservation(
     PixelObservationWrapper(
         gym.make("Pendulum-v1", g=9.81, render_mode="rgb_array")
     ),
-    64,
+    image_size,
 )
 
 # Collect data
