@@ -21,7 +21,7 @@ class ResizePixelObservation(gym.ObservationWrapper):
             shape=self.shape + (old_pixel_space.shape[2],),
             dtype=np.uint8,
         )
-        self.observation_space = spaces.Dict(spaces_dict)
+        self.observation_space = spaces_dict
 
     def observation(self, observation):
         obs_dict = dict(observation)
