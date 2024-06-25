@@ -19,6 +19,7 @@ env = ResizePixelObservation(
     64,
 )
 
+# Collect data
 observations = []
 actions = []
 for _ in range(num_sequences):
