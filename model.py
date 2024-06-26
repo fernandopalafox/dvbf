@@ -152,8 +152,8 @@ class DVBF(nn.Module):
             x_mean = observation(z_t_plus_one)
             xs_reconstructed.append(x_mean)
 
-        zs = jnp.stack(zs)
-        xs_reconstructed = jnp.stack(xs_reconstructed)
+        zs = jnp.stack(zs, axis=1)
+        xs_reconstructed = jnp.stack(xs_reconstructed, axis=1)
 
         return zs, xs_reconstructed
 
