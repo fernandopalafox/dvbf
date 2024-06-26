@@ -123,7 +123,7 @@ class DVBF(nn.Module):
         # Compute sequence of states
         zs = [z_1]
         xs_reconstructed = []
-        for t in range(xs.shape[1] - 1):
+        for t in range(xs.shape[1]):
             zs_t = zs[-1]
             xs_t_plus_one = xs[:, t + 1]
             us_t = us[:, t]
@@ -173,7 +173,7 @@ start_time = time.time()
 model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
 key, subkey = jax.random.split(rng_key, 2)
 xs = jax.random.normal(key, (num_batches, sequence_length, obs_dim))
-us = jax.random.normal(key, (num_batches, sequence_length - 1, control_dim))
+us = jax.random.normal(key, (num_batches, sequence_length, control_dim))
 params = model.init(
     {
         "params": key,
@@ -192,5 +192,7 @@ zs, xs_reconstructed = model.apply(
 )
 print("Forward pass time:", time.time() - start_time)
 
+print("xs.shape:", xs.shape)
+print("us.shape:", us.shape)
 print("zs.shape:", zs.shape)
 print("xs_reconstructed.shape:", xs_reconstructed.shape)
