@@ -9,9 +9,9 @@ from jax import numpy as jnp
 import pickle
 
 # Data collection parameters
-num_sequences = 1
+num_sequences = 1000
 sequence_length = 50
-image_size = 128
+image_size = 16  # 16x16 image
 
 # Define environment
 env = ResizePixelObservation(
@@ -33,13 +33,16 @@ for _ in range(num_sequences):
     for _ in range(sequence_length - 1):
         # Simple feedback control
         # State is [cos(theta), sin(theta), theta_dot]
-        theta = jnp.arctan2(observation["state"][1], observation["state"][0])
-        theta_dot = observation["state"][2]
-        position_gain = 100.0
-        velocity_gain = 1.0
-        action = -position_gain * theta - velocity_gain * theta_dot
+        # theta = jnp.arctan2(observation["state"][1], observation["state"][0])
+        # theta_dot = observation["state"][2]
+        # position_gain = 100.0
+        # velocity_gain = 1.0
+        # action = -position_gain * theta - velocity_gain * theta_dot
 
-        observation, reward, terminated, truncated, info = env.step(action)
+        # sample action
+        action = env.action_space.sample()
+
+        observation, reward, terminated, truncated, info = env.step(action[0])
 
         if terminated or truncated:
             observation, info = env.reset()
@@ -48,21 +51,26 @@ for _ in range(num_sequences):
         batch_actions.append(action)
         batch_observations.append(observation["pixels"])
 
-    batch_actions.append(0.0)  # Dummy action
+    batch_actions.append(env.action_space.sample())  # Dummy action
 
     states.append(jnp.stack(batch_state))
     actions.append(jnp.array(batch_actions))
     observations.append(jnp.stack(batch_observations))
 env.close()
 
-# Data dimensions (num_sequences, sequence_length, image_size, image_size, 3)
+# Data dimensions (num_sequences, sequence_length, image_size, image_size, 1)
 states = jnp.stack(states)
 actions = jnp.stack(actions)
 observations = jnp.stack(observations)
 
+# Reshape observations to (num_sequences, sequence_length, image_size**2)
+observations_reshaped = observations.reshape(
+    num_sequences, sequence_length, image_size**2
+)
+
 # Save data
 with open("data/pendulum_data.pkl", "wb") as f:
-    pickle.dump((states, actions, observations), f)
+    pickle.dump((states, actions, observations_reshaped), f)
 
 
 from matplotlib.animation import FuncAnimation
@@ -91,7 +99,6 @@ ax2.set_xlim(0, len(sequence_actions))
 ax2.set_ylim(
     min(sequence_actions).item() - 0.1, max(sequence_actions).item() + 0.1
 )
-ax2.set_xlabel("Time Step")
 ax2.set_ylabel("Control Value")
 ax2.set_title("Control")
 
