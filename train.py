@@ -1,10 +1,11 @@
 import jax
 import jax.numpy as jnp
 import optax
-from flax.training import train_state
+from flax.training.train_state import TrainState
 import flax.linen as nn
 from model import DVBF
 import pickle
+import time
 
 
 def compute_kl_divergence(mean1, logvar1, mean2, logvar2):
@@ -21,9 +22,9 @@ def compute_kl_divergence(mean1, logvar1, mean2, logvar2):
 
 
 # Compute loss
-def compute_loss(params, model, xs, us, rng_key):
+def compute_loss(params, apply_fn, xs, us, rng_key):
     # Forward pass.
-    w_means, w_logvars, zs, xs_reconstructed = model.apply(
+    w_means, w_logvars, zs, xs_reconstructed = apply_fn(
         params, xs, us, rngs={"rng_stream": rng_key}
     )
 
@@ -33,7 +34,7 @@ def compute_loss(params, model, xs, us, rng_key):
         xs, xs_reconstructed, jnp.eye(obs_dim)
     )
     # Sum over time and batch dimensions.
-    reconstruction_loss = -jnp.sum(logprob_xs, axis=1)  # check dim
+    reconstruction_loss = jnp.sum(logprob_xs, axis=1)  # check dim
 
     # KL divergence between approximate posterior and prior posterior
     # Assumes diagonal covariance matrices and zero mean prior
@@ -46,24 +47,29 @@ def compute_loss(params, model, xs, us, rng_key):
         )
     )
 
-    return reconstruction_loss - posterior_kl
+    return -(reconstruction_loss - posterior_kl)
 
 
-def create_train_state(key, model, learning_rate, x_seq, u_seq):
+def create_train_state(rng_key, model, learning_rate, xs, us):
     """Creates initial `TrainState`."""
-    params = model.init(key, x_seq, u_seq)
-    tx = optax.adadelta(learning_rate)
-    return train_state.TrainState.create(
-        apply_fn=model.apply, params=params, tx=tx
+    params = model.init(
+        {
+            "params": rng_key,
+            "rng_stream": rng_key,
+        },
+        xs,
+        us,
     )
+    tx = optax.adadelta(learning_rate)
+    return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 
 @jax.jit
-def train_step(state, batch, rng):
-    x_seq, u_seq = batch
+def train_step(state, batch, rng_key):
+    xs, us = batch
 
     def loss_fn(params):
-        return compute_loss(params, state.apply_fn, x_seq, u_seq, rng)
+        return compute_loss(params, state.apply_fn, xs, us, rng_key)[0]
 
     loss, grads = jax.value_and_grad(loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
@@ -73,8 +79,9 @@ def train_step(state, batch, rng):
 # Parameters
 init_key = jax.random.PRNGKey(0)
 learning_rate = 0.1
-batch_size = 1
-set_sizes = 500
+batch_size = 1  # One sequence at a time
+data_split = 0.8
+num_epochs = 100
 
 latent_dim = 3
 obs_dim = 16**2
@@ -89,29 +96,64 @@ xs = observations
 xs = xs / 255.0 - 0.5  # Normalize to [-0.5, 0.5]
 us = actions
 
+# Temporary
+xs = xs[:50]
+us = us[:50]
+
 sequence_length = xs.shape[1]
+train_size = int(data_split * xs.shape[0])
 
-xs_train = xs[:set_sizes]
-us_train = us[:set_sizes]
-
-xs_val = xs[set_sizes:]
-us_val = us[set_sizes:]
+xs_train = xs[:train_size]
+us_train = us[:train_size]
+xs_val = xs[train_size:]
+us_val = us[train_size:]
 
 # Load model
 model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
 key, subkey = jax.random.split(init_key, 2)
-params = model.init(
-    {
-        "params": subkey,
-        "rng_stream": subkey,
-    },
-    jax.random.normal(subkey, (batch_size, sequence_length, obs_dim)),
-    jax.random.normal(subkey, (batch_size, sequence_length, control_dim)),
-)
+optimizer = optax.adadelta(learning_rate)
 
 
-# TEMPORARY
-key, subkey = jax.random.split(key, 2)
-test_loss = compute_loss(
-    params, model, xs_train[jnp.newaxis, 0], us_train[jnp.newaxis, 0], subkey
+# Training loop
+train_state = create_train_state(
+    subkey, model, learning_rate, xs_train, us_train
 )
+for epoch in range(num_epochs):
+    start_time = time.time()
+
+    key, subkey = jax.random.split(key, 2)
+    random_permutation = jax.random.permutation(subkey, train_size)
+    xs_permuted = xs_train[random_permutation]
+    us_permuted = us_train[random_permutation]
+
+    # Training loss
+    total_train_loss = 0
+    for i in range(0, train_size, batch_size):
+        key, subkey = jax.random.split(key, 2)
+        batch = (
+            xs_permuted[i : i + batch_size],
+            us_permuted[i : i + batch_size],
+        )
+        train_state, loss = train_step(train_state, batch, subkey)
+        total_train_loss += loss
+
+    # Validation loss
+    total_val_loss = 0
+    for i in range(0, xs_val.shape[0], batch_size):
+        key, subkey = jax.random.split(key, 2)
+        batch = (xs_val[i : i + batch_size], us_val[i : i + batch_size])
+        val_loss = compute_loss(
+            train_state.params, train_state.apply_fn, *batch, subkey
+        )[0]
+        total_val_loss += val_loss
+
+    total_train_loss /= train_size
+    total_val_loss /= xs_val.shape[0]
+
+    # Print epoch statistics
+    epoch_time = time.time() - start_time
+    eta = epoch_time * (num_epochs - epoch - 1)
+    eta = time.strftime("%H:%M:%S", time.gmtime(eta))
+    print(f"E {epoch + 1} | TL {total_train_loss:.2f} |", end="")
+    print(f" VL {total_val_loss:.2f} | t {epoch_time:.2f}s", end="")
+    print(f" | ETA: {eta}s")
