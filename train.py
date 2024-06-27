@@ -6,6 +6,70 @@ import flax.linen as nn
 from model import DVBF
 import pickle
 
+
+def compute_kl_divergence(mean1, logvar1, mean2, logvar2):
+    """KL divergence between two Gaussian distributions.
+    Assumes diagonal covariance matrices for both distributions.
+    """
+    kl = 0.5 * (
+        jnp.sum(logvar2 - logvar1, axis=-1)
+        + jnp.sum(jnp.exp(logvar1 - logvar2), axis=-1)
+        + jnp.sum((mean2 - mean1) ** 2 / jnp.exp(logvar2), axis=-1)
+        - mean1.shape[-1]
+    )
+    return kl
+
+
+# Compute loss
+def compute_loss(params, model, xs, us, rng_key):
+    # Forward pass.
+    w_means, w_logvars, zs, xs_reconstructed = model.apply(
+        params, xs, us, rngs={"rng_stream": rng_key}
+    )
+
+    # Reconstruction loss.
+    # Logprobs from isotropic Gaussian observation model.
+    logprob_xs = jax.scipy.stats.multivariate_normal.logpdf(
+        xs, xs_reconstructed, jnp.eye(obs_dim)
+    )
+    # Sum over time and batch dimensions.
+    reconstruction_loss = -jnp.sum(logprob_xs, axis=1)  # check dim
+
+    # KL divergence between approximate posterior and prior posterior
+    # Assumes diagonal covariance matrices and zero mean prior
+    posterior_kl = jnp.sum(
+        compute_kl_divergence(
+            w_means,
+            w_logvars,
+            jnp.zeros_like(w_means),
+            jnp.zeros_like(w_logvars),
+        )
+    )
+
+    return reconstruction_loss - posterior_kl
+
+
+def create_train_state(key, model, learning_rate, x_seq, u_seq):
+    """Creates initial `TrainState`."""
+    params = model.init(key, x_seq, u_seq)
+    tx = optax.adadelta(learning_rate)
+    return train_state.TrainState.create(
+        apply_fn=model.apply, params=params, tx=tx
+    )
+
+
+@jax.jit
+def train_step(state, batch, rng):
+    x_seq, u_seq = batch
+
+    def loss_fn(params):
+        return compute_loss(params, state.apply_fn, x_seq, u_seq, rng)
+
+    loss, grads = jax.value_and_grad(loss_fn)(state.params)
+    state = state.apply_gradients(grads=grads)
+    return state, loss
+
+
 # Parameters
 init_key = jax.random.PRNGKey(0)
 learning_rate = 0.1
@@ -46,59 +110,8 @@ params = model.init(
 )
 
 
-def compute_kl_divergence(mean1, logvar1, mean2, logvar2):
-    """KL divergence between two Gaussian distributions.
-    Assumes diagonal covariance matrices for both distributions.
-    """
-    kl = 0.5 * (
-        jnp.sum(logvar2 - logvar1, axis=-1)
-        + jnp.sum(jnp.exp(logvar1 - logvar2), axis=-1)
-        + jnp.sum((mean2 - mean1) ** 2 / jnp.exp(logvar2), axis=-1)
-        - mean1.shape[-1]
-    )
-    return kl
-
-
-# Compute loss
-def loss(params, model, xs, us, rng_key):
-    # Forward pass.
-    w_means, w_logvars, zs, xs_reconstructed = model.apply(
-        params, xs, us, rngs={"rng_stream": rng_key}
-    )
-
-    # Reconstruction loss.
-    # Logprobs from isotropic Gaussian observation model.
-    logprob_xs = jax.scipy.stats.multivariate_normal.logpdf(
-        xs, xs_reconstructed, jnp.eye(obs_dim)
-    )
-    # Sum over time and batch dimensions.
-    reconstruction_loss = -jnp.sum(logprob_xs, axis=1)  # check dim
-
-    # KL divergence between approximate posterior and prior posterior
-    # Assumes diagonal covariance matrices and zero mean prior
-    posterior_kl = jnp.sum(
-        compute_kl_divergence(
-            w_means,
-            w_logvars,
-            jnp.zeros_like(w_means),
-            jnp.zeros_like(w_logvars),
-        )
-    )
-
-    return reconstruction_loss - posterior_kl
-
-
 # TEMPORARY
 key, subkey = jax.random.split(key, 2)
-test_loss = loss(
+test_loss = compute_loss(
     params, model, xs_train[jnp.newaxis, 0], us_train[jnp.newaxis, 0], subkey
 )
-
-
-def create_train_state(key, model, learning_rate, x_seq, u_seq):
-    """Creates initial `TrainState`."""
-    params = model.init(key, x_seq, u_seq)
-    tx = optax.adadelta(learning_rate)
-    return train_state.TrainState.create(
-        apply_fn=model.apply, params=params, tx=tx
-    )
