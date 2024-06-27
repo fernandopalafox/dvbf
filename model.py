@@ -165,43 +165,43 @@ class DVBF(nn.Module):
         return w_means, w_logvars, zs, xs_reconstructed
 
 
-# Example usage
-num_batches = 1
-latent_dim = 3
-obs_dim = 16**2
-control_dim = 1
-num_matrices = 4
-sequence_length = 10
-rng_key = jax.random.PRNGKey(0)
+# # Example usage
+# num_batches = 1
+# latent_dim = 3
+# obs_dim = 16**2
+# control_dim = 1
+# num_matrices = 4
+# sequence_length = 10
+# rng_key = jax.random.PRNGKey(0)
 
 
-# Initialize model
-start_time = time.time()
-model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
-key, subkey = jax.random.split(rng_key, 2)
-xs = jax.random.normal(key, (num_batches, sequence_length, obs_dim))
-us = jax.random.normal(key, (num_batches, sequence_length, control_dim))
-params = model.init(
-    {
-        "params": key,
-        "rng_stream": key,
-    },
-    xs,
-    us,
-)
-print("Initialization time:", time.time() - start_time)
+# # Initialize model
+# start_time = time.time()
+# model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
+# key, subkey = jax.random.split(rng_key, 2)
+# xs = jax.random.normal(key, (num_batches, sequence_length, obs_dim))
+# us = jax.random.normal(key, (num_batches, sequence_length, control_dim))
+# params = model.init(
+#     {
+#         "params": key,
+#         "rng_stream": key,
+#     },
+#     xs,
+#     us,
+# )
+# print("Initialization time:", time.time() - start_time)
 
-# Forward pass
-start_time = time.time()
-key_forward, subkey = jax.random.split(subkey)
-w_means, w_logvars, zs, xs_reconstructed = model.apply(
-    params, xs, us, rngs={"rng_stream": key_forward}
-)
-print("Forward pass time:", time.time() - start_time)
+# # Forward pass
+# start_time = time.time()
+# key_forward, subkey = jax.random.split(subkey)
+# w_means, w_logvars, zs, xs_reconstructed = model.apply(
+#     params, xs, us, rngs={"rng_stream": key_forward}
+# )
+# print("Forward pass time:", time.time() - start_time)
 
-print("xs.shape:", xs.shape)
-print("us.shape:", us.shape)
-print("w_means.shape:", w_means.shape)
-print("w_logvars.shape:", w_logvars.shape)
-print("zs.shape:", zs.shape)
-print("xs_reconstructed.shape:", xs_reconstructed.shape)
+# print("xs.shape:", xs.shape)
+# print("us.shape:", us.shape)
+# print("w_means.shape:", w_means.shape)
+# print("w_logvars.shape:", w_logvars.shape)
+# print("zs.shape:", zs.shape)
+# print("xs_reconstructed.shape:", xs_reconstructed.shape)
