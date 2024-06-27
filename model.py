@@ -13,7 +13,7 @@ class InitialNetwork(nn.Module):
         # Simple LSTM network
         lstm_output = nn.RNN(nn.OptimizedLSTMCell(128))(xs)
 
-        # Output mean and logvar for w_1
+        # Output mean and logvar for w_1_init
         out = nn.Dense(128)(lstm_output[:, -1])
         out = nn.relu(out)
         params = nn.Dense(2 * self.latent_dim)(out)
@@ -25,9 +25,9 @@ class InitialTransition(nn.Module):
     latent_dim: int
 
     @nn.compact
-    def __call__(self, w_1):
+    def __call__(self, w_1_init):
         # 128 ReLU + latent_dim output
-        out = nn.Dense(128)(w_1)
+        out = nn.Dense(128)(w_1_init)
         out = nn.relu(out)
         z_1 = nn.Dense(self.latent_dim)(out)
         return z_1
@@ -94,14 +94,14 @@ class DVBF(nn.Module):
         )
 
         # Sample initial network
-        w_1_mean, w_1_logvar = initial_network(xs)
+        w_mean_init, w_logvar_init = initial_network(xs)
         key = self.make_rng("rng_stream")
-        w_1 = w_1_mean + jnp.exp(w_1_logvar / 2) * jax.random.normal(
-            key, w_1_mean.shape
-        )
+        w_1_init = w_mean_init + jnp.exp(
+            w_logvar_init / 2
+        ) * jax.random.normal(key, w_mean_init.shape)
 
         # Compute initial transition
-        z_1 = initial_transition(w_1)
+        z_1 = initial_transition(w_1_init)
 
         # Transition matrices
         As = self.param(
@@ -123,17 +123,22 @@ class DVBF(nn.Module):
         # Compute sequence of states
         zs = [z_1]
         xs_reconstructed = []
-        for t in range(xs.shape[1]):
-            zs_t = zs[-1]
-            xs_t_plus_one = xs[:, t + 1]
-            us_t = us[:, t]
+        w_means = []
+        w_logvars = []
+        T = xs.shape[1]
+        for t in range(1, T + 1):  # t = 1, ..., T
+            zs_t = zs[t - 1]
+            xs_t_plus_one = xs[:, t]
+            us_t = us[:, t - 1]
 
             # Compute next latent state
             # Sample stochastic component
-            w_mean, w_logvar = recognition(zs_t, xs_t_plus_one, us_t)
+            w_mean_t, w_logvar_t = recognition(zs_t, xs_t_plus_one, us_t)
+            w_means.append(w_mean_t)
+            w_logvars.append(w_logvar_t)
             key = self.make_rng("rng_stream")
-            w_t = w_mean + jnp.exp(w_logvar / 2) * jax.random.normal(
-                key, w_mean.shape
+            w_t = w_mean_t + jnp.exp(w_logvar_t / 2) * jax.random.normal(
+                key, w_mean_t.shape
             )
             # Compute deterministic component
             alphas = transition_weights(zs_t, us_t)
@@ -152,14 +157,16 @@ class DVBF(nn.Module):
             x_mean = observation(z_t_plus_one)
             xs_reconstructed.append(x_mean)
 
+        w_means = jnp.stack(w_means, axis=1)
+        w_logvars = jnp.stack(w_logvars, axis=1)
         zs = jnp.stack(zs, axis=1)
         xs_reconstructed = jnp.stack(xs_reconstructed, axis=1)
 
-        return zs, xs_reconstructed
+        return w_means, w_logvars, zs, xs_reconstructed
 
 
 # Example usage
-num_batches = 10
+num_batches = 1
 latent_dim = 3
 obs_dim = 16**2
 control_dim = 1
@@ -187,12 +194,14 @@ print("Initialization time:", time.time() - start_time)
 # Forward pass
 start_time = time.time()
 key_forward, subkey = jax.random.split(subkey)
-zs, xs_reconstructed = model.apply(
+w_means, w_logvars, zs, xs_reconstructed = model.apply(
     params, xs, us, rngs={"rng_stream": key_forward}
 )
 print("Forward pass time:", time.time() - start_time)
 
 print("xs.shape:", xs.shape)
 print("us.shape:", us.shape)
+print("w_means.shape:", w_means.shape)
+print("w_logvars.shape:", w_logvars.shape)
 print("zs.shape:", zs.shape)
 print("xs_reconstructed.shape:", xs_reconstructed.shape)
