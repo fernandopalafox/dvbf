@@ -6,6 +6,8 @@ import flax.linen as nn
 from model import DVBF
 import pickle
 import time
+import matplotlib.pyplot as plt
+import signal
 
 
 def compute_kl_divergence(mean1, logvar1, mean2, logvar2):
@@ -76,12 +78,47 @@ def train_step(state, batch, rng_key):
     return state, loss
 
 
+# Signal handler
+continue_training = True
+
+
+def signal_handler(sig, frame):
+    global continue_training
+    print("\nInterrupt received. Stopping training and saving model...")
+    continue_training = False
+
+
+# Register the signal handler
+signal.signal(signal.SIGINT, signal_handler)
+
+
+# Function to save the model
+def save_model(train_state, epoch):
+    with open(f"data/model_params_epoch_{epoch}.pkl", "wb") as f:
+        pickle.dump(train_state.params, f)
+    print(f"Model saved at epoch {epoch}")
+
+
+# Function to save the plot
+def save_plot(train_losses, val_losses):
+    plt.figure(figsize=(12, 8))
+    plt.plot(train_losses, "b-", label="Train Loss")
+    plt.plot(val_losses, "r-", label="Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("DVBF Training Progress")
+    plt.legend()
+    plt.savefig(f"figures/training_progress.png")
+    plt.close()
+    print(f"Plot saved as 'training_progress.png'")
+
+
 # Parameters
 init_key = jax.random.PRNGKey(0)
 learning_rate = 0.1
 batch_size = 1  # One sequence at a time
-data_split = 0.8
-num_epochs = 100
+data_split = 0.5
+num_epochs = 500
 
 latent_dim = 3
 obs_dim = 16**2
@@ -96,9 +133,9 @@ xs = observations
 xs = xs / 255.0 - 0.5  # Normalize to [-0.5, 0.5]
 us = actions
 
-# Temporary
-xs = xs[:50]
-us = us[:50]
+# TEMPORARY: try to overfit a small dataset
+xs = xs[:2]
+ys = us[:2]
 
 sequence_length = xs.shape[1]
 train_size = int(data_split * xs.shape[0])
@@ -115,45 +152,89 @@ optimizer = optax.adadelta(learning_rate)
 
 
 # Training loop
+# Set up the plot
+plt.ion()  # Turn on interactive mode
+fig, ax = plt.subplots(figsize=(10, 6))
+(line1,) = ax.plot([], [], "b-", label="Train Loss")
+(line2,) = ax.plot([], [], "r-", label="Validation Loss")
+ax.set_xlabel("Epoch")
+ax.set_ylabel("Loss")
+ax.set_title("DVBF Training Progress")
+ax.legend()
+
+train_losses = []
+val_losses = []
+
+# Training loop
 train_state = create_train_state(
     subkey, model, learning_rate, xs_train, us_train
 )
-for epoch in range(num_epochs):
-    start_time = time.time()
 
-    key, subkey = jax.random.split(key, 2)
-    random_permutation = jax.random.permutation(subkey, train_size)
-    xs_permuted = xs_train[random_permutation]
-    us_permuted = us_train[random_permutation]
 
-    # Training loss
-    total_train_loss = 0
-    for i in range(0, train_size, batch_size):
+try:
+    for epoch in range(num_epochs):
+        if not continue_training:
+            break
+
+        start_time = time.time()
+
         key, subkey = jax.random.split(key, 2)
-        batch = (
-            xs_permuted[i : i + batch_size],
-            us_permuted[i : i + batch_size],
-        )
-        train_state, loss = train_step(train_state, batch, subkey)
-        total_train_loss += loss
+        random_permutation = jax.random.permutation(subkey, train_size)
+        xs_permuted = xs_train[random_permutation]
+        us_permuted = us_train[random_permutation]
 
-    # Validation loss
-    total_val_loss = 0
-    for i in range(0, xs_val.shape[0], batch_size):
-        key, subkey = jax.random.split(key, 2)
-        batch = (xs_val[i : i + batch_size], us_val[i : i + batch_size])
-        val_loss = compute_loss(
-            train_state.params, train_state.apply_fn, *batch, subkey
-        )[0]
-        total_val_loss += val_loss
+        # Training loss
+        total_train_loss = 0
+        for i in range(0, train_size, batch_size):
+            key, subkey = jax.random.split(key, 2)
+            batch = (
+                xs_permuted[i : i + batch_size],
+                us_permuted[i : i + batch_size],
+            )
+            train_state, loss = train_step(train_state, batch, subkey)
+            total_train_loss += loss
 
-    total_train_loss /= train_size
-    total_val_loss /= xs_val.shape[0]
+        # Validation loss
+        total_val_loss = 0
+        for i in range(0, xs_val.shape[0], batch_size):
+            key, subkey = jax.random.split(key, 2)
+            batch = (xs_val[i : i + batch_size], us_val[i : i + batch_size])
+            val_loss = compute_loss(
+                train_state.params, train_state.apply_fn, *batch, subkey
+            )[0]
+            total_val_loss += val_loss
 
-    # Print epoch statistics
-    epoch_time = time.time() - start_time
-    eta = epoch_time * (num_epochs - epoch - 1)
-    eta = time.strftime("%H:%M:%S", time.gmtime(eta))
-    print(f"E {epoch + 1} | TL {total_train_loss:.2f} |", end="")
-    print(f" VL {total_val_loss:.2f} | t {epoch_time:.2f}s", end="")
-    print(f" | ETA: {eta}s")
+        total_train_loss /= train_size
+        total_val_loss /= xs_val.shape[0]
+
+        train_losses.append(total_train_loss)
+        val_losses.append(total_val_loss)
+
+        # Update the plot
+        line1.set_data(range(1, len(train_losses) + 1), train_losses)
+        line2.set_data(range(1, len(val_losses) + 1), val_losses)
+        ax.relim()
+        ax.autoscale_view()
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+
+        # Print epoch statistics
+        epoch_time = time.time() - start_time
+        eta = epoch_time * (num_epochs - epoch - 1)
+        eta = time.strftime("%H:%M:%S", time.gmtime(eta))
+        print(f"E {epoch + 1} | TL {total_train_loss:.2f} |", end="")
+        print(f" VL {total_val_loss:.2f} | t {epoch_time:.2f}s", end="")
+        print(f" | ETA: {eta}s")
+
+except Exception as e:
+    print(f"An error occurred: {e}")
+finally:
+    # Save the model and plot regardless of how the training ends
+    save_model(train_state, epoch)
+    save_plot(train_losses, val_losses)
+
+
+plt.ioff()
+plt.show()
+
+print("Training complete or interrupted. Model and plot saved.")
