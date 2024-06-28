@@ -11,7 +11,10 @@ class InitialNetwork(nn.Module):
     @nn.compact
     def __call__(self, xs):
         # Simple LSTM network
-        lstm_output = nn.RNN(nn.OptimizedLSTMCell(128))(xs)
+        lstm_output = nn.Bidirectional(
+            nn.RNN(nn.OptimizedLSTMCell(128)),
+            nn.RNN(nn.OptimizedLSTMCell(128)),
+        )(xs)
 
         # Output mean and logvar for w_1_init
         out = nn.Dense(128)(lstm_output[:, -1])
@@ -67,12 +70,10 @@ class TransitionWeights(nn.Module):
     def __call__(self, z_t, u_t):
         # 16 softmax output
         out = jnp.concatenate([z_t, u_t], axis=-1)
-        alphas = nn.Dense(
+        out = nn.Dense(
             self.num_matrices,
-            use_bias=False,
-            kernel_init=nn.initializers.normal(0.01),
         )(out)
-        alphas = nn.softmax(alphas)
+        alphas = nn.softmax(out)
         return alphas
 
 

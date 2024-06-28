@@ -10,19 +10,6 @@ import matplotlib.pyplot as plt
 import signal
 
 
-def compute_kl_divergence(mean1, logvar1, mean2, logvar2):
-    """KL divergence between two Gaussian distributions.
-    Assumes diagonal covariance matrices for both distributions.
-    """
-    kl = 0.5 * (
-        jnp.sum(logvar2 - logvar1, axis=-1)
-        + jnp.sum(jnp.exp(logvar1 - logvar2), axis=-1)
-        + jnp.sum((mean2 - mean1) ** 2 / jnp.exp(logvar2), axis=-1)
-        - mean1.shape[-1]
-    )
-    return kl
-
-
 def compute_annealed_kl_divergence(mean1, logvar1, mean2, logvar2, c):
     kl = jnp.sum(
         c * 1 / 2 * jnp.log(2 * jnp.pi)
@@ -35,11 +22,10 @@ def compute_annealed_kl_divergence(mean1, logvar1, mean2, logvar2, c):
         - 1 / 2,
         axis=-1,
     )
-    return kl
+    return -kl
 
 
-# Compute loss
-def compute_loss(params, apply_fn, xs, us, rng_key, separate=False, c=1.0):
+def compute_loss(params, apply_fn, xs, us, rng_key, c=1.0):
     # Forward pass.
     w_means, w_logvars, zs, xs_reconstructed = apply_fn(
         params, xs, us, rngs={"rng_stream": rng_key}
@@ -50,12 +36,13 @@ def compute_loss(params, apply_fn, xs, us, rng_key, separate=False, c=1.0):
     logprob_xs = jax.scipy.stats.multivariate_normal.logpdf(
         xs, xs_reconstructed, jnp.eye(obs_dim)
     )
-    reconstruction_loss = jnp.sum(logprob_xs, axis=1)  # sum over time axis
-    reconstruction_loss = -c * reconstruction_loss  # anneal and flip
+    expected_logprob = jnp.sum(logprob_xs, axis=1)  # sum over time axis.
+    reconstruction_loss = -expected_logprob  # flip sign
+    annealed_reconstruction_loss = c * reconstruction_loss
 
     # KL divergence between approximate posterior and prior posterior
     # Assumes diagonal covariance matrices and zero mean prior
-    posterior_kl = jnp.sum(
+    annealed_posterior_kl = jnp.sum(
         compute_annealed_kl_divergence(
             w_means,
             w_logvars,
@@ -66,14 +53,11 @@ def compute_loss(params, apply_fn, xs, us, rng_key, separate=False, c=1.0):
         axis=1,
     )  # sum over time axis
 
-    if separate:
-        return (
-            reconstruction_loss + posterior_kl,
-            reconstruction_loss,
-            posterior_kl,
-        )
-    else:
-        return reconstruction_loss + posterior_kl
+    return (
+        annealed_reconstruction_loss + annealed_posterior_kl,
+        annealed_reconstruction_loss,
+        annealed_posterior_kl,
+    )
 
 
 def create_train_state(rng_key, model, learning_rate, xs, us):
@@ -95,7 +79,8 @@ def train_step(state, batch, rng_key, c=1.0):
     xs, us = batch
 
     def loss_fn(params):
-        return compute_loss(params, state.apply_fn, xs, us, rng_key, c=c)[0]
+        loss, _, _ = compute_loss(params, state.apply_fn, xs, us, rng_key, c=c)
+        return jnp.mean(loss)  # sgd
 
     loss, grads = jax.value_and_grad(loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
@@ -103,8 +88,7 @@ def train_step(state, batch, rng_key, c=1.0):
 
 
 def annealing_scheduler(i, T_a):
-    # return jnp.min(jnp.array([1.0, 0.01 + i / T_a]))
-    return 1.0
+    return jnp.min(jnp.array([1.0, 0.01 + i / T_a]))
 
 
 # Signal handler
@@ -146,6 +130,7 @@ def save_plot(
     plt.ylabel("Total Loss")
     plt.title("DVBF Training Progress - Total Loss")
     plt.legend()
+    plt.ylim(bottom=0)
 
     plt.subplot(2, 1, 2)
     plt.plot(train_recon_losses, "b-", label="Train Recon Loss")
@@ -155,6 +140,8 @@ def save_plot(
     plt.xlabel("Epoch")
     plt.ylabel("Component Losses")
     plt.title("DVBF Training Progress - Component Losses")
+    plt.ylim(bottom=0)
+
     plt.tight_layout()
     plt.savefig(f"figures/training_progress_detailed.png")
     plt.close()
@@ -164,11 +151,13 @@ def save_plot(
 # Parameters
 init_key = jax.random.PRNGKey(0)
 learning_rate = 0.1
-batch_size = 1  # One sequence at a time
-data_split = 0.9
-num_epochs = 500
+optimizer = optax.adadelta(learning_rate)
+batch_size = 500
+data_split = 0.5
+num_epochs = 5000
 c_0 = 0.01
 T_a = 10**5
+update_interval = 250
 
 latent_dim = 3
 obs_dim = 16**2
@@ -183,10 +172,6 @@ xs = observations
 xs = xs / 255.0  # Normalize to [0, 1]
 us = actions
 
-# TEMPORARY: try to overfit a small dataset
-xs = xs[:2]
-ys = us[:2]
-
 sequence_length = xs.shape[1]
 train_size = int(data_split * xs.shape[0])
 
@@ -198,8 +183,6 @@ us_val = us[train_size:]
 # Load model
 model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
 key, subkey = jax.random.split(init_key, 2)
-optimizer = optax.adadelta(learning_rate)
-
 
 # Training loop
 # Set up the plot
@@ -230,8 +213,7 @@ val_kl_losses = []
 train_state = create_train_state(
     subkey, model, learning_rate, xs_train, us_train
 )
-
-
+c_i = c_0
 try:
     for epoch in range(num_epochs):
         if not continue_training:
@@ -245,14 +227,14 @@ try:
         us_permuted = us_train[random_permutation]
 
         # Training loss
-        total_train_loss = 0
-        total_train_recon_loss = 0
-        total_train_kl_loss = 0
-        c_i = 0
+        epoch_train_losses = []
+        epoch_recon_losses = []
+        epoch_kl_losses = []
         for i in range(0, train_size, batch_size):
             key, subkey = jax.random.split(key, 2)
             update_i = epoch * (train_size // batch_size) + i
-            c_i = annealing_scheduler(update_i, T_a)
+            if jnp.mod(update_i, update_interval) == 0:
+                c_i = annealing_scheduler(update_i, T_a)
             batch = (
                 xs_permuted[i : i + batch_size],
                 us_permuted[i : i + batch_size],
@@ -264,17 +246,16 @@ try:
                 old_train_state.apply_fn,
                 *batch,
                 subkey,
-                separate=True,
                 c=c_i,
             )  # use old state for loss computation? Or new one?
-            total_train_loss += loss
-            total_train_recon_loss += train_recon[0]
-            total_train_kl_loss += train_kl[0]
+            epoch_train_losses.append(jnp.mean(train_loss))
+            epoch_recon_losses.append(jnp.mean(train_recon))
+            epoch_kl_losses.append(jnp.mean(train_kl))
 
         # Validation loss
-        total_val_loss = 0
-        total_val_recon_loss = 0
-        total_val_kl_loss = 0
+        epoch_val_losses = []
+        epoch_val_recon_losses = []
+        epoch_val_kl_losses = []
         for i in range(0, xs_val.shape[0], batch_size):
             key, subkey = jax.random.split(key, 2)
             batch = (xs_val[i : i + batch_size], us_val[i : i + batch_size])
@@ -283,27 +264,18 @@ try:
                 train_state.apply_fn,
                 *batch,
                 subkey,
-                separate=True,
                 c=c_i,
             )
+            epoch_val_losses.append(jnp.mean(val_loss))
+            epoch_val_recon_losses.append(jnp.mean(val_recon))
+            epoch_val_kl_losses.append(jnp.mean(val_kl))
 
-            total_val_loss += val_loss[0]
-            total_val_recon_loss += val_recon[0]
-            total_val_kl_loss += val_kl[0]
-
-        total_train_loss /= train_size
-        total_train_recon_loss /= train_size
-        total_train_kl_loss /= train_size
-        total_val_loss /= xs_val.shape[0]
-        total_val_recon_loss /= xs_val.shape[0]
-        total_val_kl_loss /= xs_val.shape[0]
-
-        train_losses.append(total_train_loss)
-        train_recon_losses.append(total_train_recon_loss)
-        train_kl_losses.append(total_train_kl_loss)
-        val_losses.append(total_val_loss)
-        val_recon_losses.append(total_val_recon_loss)
-        val_kl_losses.append(total_val_kl_loss)
+        train_losses.append(jnp.mean(epoch_train_losses))
+        train_recon_losses.append(jnp.mean(epoch_recon_losses))
+        train_kl_losses.append(jnp.mean(epoch_kl_losses))
+        val_losses.append(jnp.mean(epoch_val_losses))
+        val_recon_losses.append(jnp.mean(epoch_val_recon_losses))
+        val_kl_losses.append(jnp.mean(epoch_val_kl_losses))
 
         # Update the plot
         epochs = range(1, len(train_losses) + 1)
@@ -323,8 +295,14 @@ try:
         epoch_time = time.time() - start_time
         eta = epoch_time * (num_epochs - epoch - 1)
         eta = time.strftime("%H:%M:%S", time.gmtime(eta))
-        print(f"E {epoch + 1} | TL {total_train_loss:.2f} |", end="")
-        print(f" VL {total_val_loss:.2f} | t {epoch_time:.2f}s", end="")
+        print(
+            f"E {epoch + 1} | TL {jnp.mean(epoch_train_losses):.2f} |", end=""
+        )
+        print(
+            f" VL {jnp.mean(epoch_val_losses):.2f} | t {epoch_time:.2f}s",
+            end="",
+        )
+        print(f" | c {c_i:.2f}", end="")
         print(f" | ETA: {eta}s")
 
 except Exception as e:
