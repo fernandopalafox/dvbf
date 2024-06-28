@@ -23,8 +23,23 @@ def compute_kl_divergence(mean1, logvar1, mean2, logvar2):
     return kl
 
 
+def compute_annealed_kl_divergence(mean1, logvar1, mean2, logvar2, c):
+    kl = jnp.sum(
+        c * 1 / 2 * jnp.log(2 * jnp.pi)
+        + c * 1 / 2 * logvar2
+        - 1 / 2 * jnp.log(2 * jnp.pi)
+        - 1 / 2 * logvar1
+        + c
+        * (jnp.exp(logvar1) + (mean1 - mean2) ** 2)
+        / (2 * jnp.exp(logvar2))
+        - 1 / 2,
+        axis=-1,
+    )
+    return kl
+
+
 # Compute loss
-def compute_loss(params, apply_fn, xs, us, rng_key, separate=False):
+def compute_loss(params, apply_fn, xs, us, rng_key, separate=False, c=1.0):
     # Forward pass.
     w_means, w_logvars, zs, xs_reconstructed = apply_fn(
         params, xs, us, rngs={"rng_stream": rng_key}
@@ -35,29 +50,30 @@ def compute_loss(params, apply_fn, xs, us, rng_key, separate=False):
     logprob_xs = jax.scipy.stats.multivariate_normal.logpdf(
         xs, xs_reconstructed, jnp.eye(obs_dim)
     )
-    # Sum over time and batch dimensions.
-    reconstruction_loss = jnp.sum(logprob_xs, axis=1)  # check dim
+    reconstruction_loss = jnp.sum(logprob_xs, axis=1)  # sum over time axis
+    reconstruction_loss = -c * reconstruction_loss  # anneal and flip
 
     # KL divergence between approximate posterior and prior posterior
     # Assumes diagonal covariance matrices and zero mean prior
     posterior_kl = jnp.sum(
-        compute_kl_divergence(
+        compute_annealed_kl_divergence(
             w_means,
             w_logvars,
             jnp.zeros_like(w_means),
             jnp.zeros_like(w_logvars),
+            c,
         ),
         axis=1,
-    )
+    )  # sum over time axis
 
     if separate:
         return (
-            -(reconstruction_loss - posterior_kl),
-            -reconstruction_loss,
+            reconstruction_loss + posterior_kl,
+            reconstruction_loss,
             posterior_kl,
         )
     else:
-        return -(reconstruction_loss - posterior_kl)
+        return reconstruction_loss + posterior_kl
 
 
 def create_train_state(rng_key, model, learning_rate, xs, us):
@@ -75,15 +91,20 @@ def create_train_state(rng_key, model, learning_rate, xs, us):
 
 
 @jax.jit
-def train_step(state, batch, rng_key):
+def train_step(state, batch, rng_key, c=1.0):
     xs, us = batch
 
     def loss_fn(params):
-        return compute_loss(params, state.apply_fn, xs, us, rng_key)[0]
+        return compute_loss(params, state.apply_fn, xs, us, rng_key, c=c)[0]
 
     loss, grads = jax.value_and_grad(loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
     return state, loss
+
+
+def annealing_scheduler(i, T_a):
+    # return jnp.min(jnp.array([1.0, 0.01 + i / T_a]))
+    return 1.0
 
 
 # Signal handler
@@ -146,6 +167,8 @@ learning_rate = 0.1
 batch_size = 1  # One sequence at a time
 data_split = 0.9
 num_epochs = 500
+c_0 = 0.01
+T_a = 10**5
 
 latent_dim = 3
 obs_dim = 16**2
@@ -157,7 +180,7 @@ with open("data/pendulum_data.pkl", "rb") as f:
     states, actions, observations = pickle.load(f)
 
 xs = observations
-xs = xs / 255.0 - 0.5  # Normalize to [-0.5, 0.5]
+xs = xs / 255.0  # Normalize to [0, 1]
 us = actions
 
 # TEMPORARY: try to overfit a small dataset
@@ -225,20 +248,24 @@ try:
         total_train_loss = 0
         total_train_recon_loss = 0
         total_train_kl_loss = 0
+        c_i = 0
         for i in range(0, train_size, batch_size):
             key, subkey = jax.random.split(key, 2)
+            update_i = epoch * (train_size // batch_size) + i
+            c_i = annealing_scheduler(update_i, T_a)
             batch = (
                 xs_permuted[i : i + batch_size],
                 us_permuted[i : i + batch_size],
             )
             old_train_state = train_state
-            train_state, loss = train_step(train_state, batch, subkey)
+            train_state, loss = train_step(train_state, batch, subkey, c=c_i)
             train_loss, train_recon, train_kl = compute_loss(
                 old_train_state.params,
                 old_train_state.apply_fn,
                 *batch,
                 subkey,
                 separate=True,
+                c=c_i,
             )  # use old state for loss computation? Or new one?
             total_train_loss += loss
             total_train_recon_loss += train_recon[0]
@@ -257,6 +284,7 @@ try:
                 *batch,
                 subkey,
                 separate=True,
+                c=c_i,
             )
 
             total_val_loss += val_loss[0]
