@@ -24,7 +24,7 @@ def compute_kl_divergence(mean1, logvar1, mean2, logvar2):
 
 
 # Compute loss
-def compute_loss(params, apply_fn, xs, us, rng_key):
+def compute_loss(params, apply_fn, xs, us, rng_key, separate=False):
     # Forward pass.
     w_means, w_logvars, zs, xs_reconstructed = apply_fn(
         params, xs, us, rngs={"rng_stream": rng_key}
@@ -46,10 +46,18 @@ def compute_loss(params, apply_fn, xs, us, rng_key):
             w_logvars,
             jnp.zeros_like(w_means),
             jnp.zeros_like(w_logvars),
-        )
+        ),
+        axis=1,
     )
 
-    return -(reconstruction_loss - posterior_kl)
+    if separate:
+        return (
+            -(reconstruction_loss - posterior_kl),
+            -reconstruction_loss,
+            posterior_kl,
+        )
+    else:
+        return -(reconstruction_loss - posterior_kl)
 
 
 def create_train_state(rng_key, model, learning_rate, xs, us):
@@ -100,24 +108,43 @@ def save_model(train_state, epoch):
 
 
 # Function to save the plot
-def save_plot(train_losses, val_losses):
-    plt.figure(figsize=(12, 8))
+def save_plot(
+    train_losses,
+    train_recon_losses,
+    train_kl_losses,
+    val_losses,
+    val_recon_losses,
+    val_kl_losses,
+):
+    plt.figure(figsize=(12, 16))
+
+    plt.subplot(2, 1, 1)
     plt.plot(train_losses, "b-", label="Train Loss")
     plt.plot(val_losses, "r-", label="Validation Loss")
     plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("DVBF Training Progress")
+    plt.ylabel("Total Loss")
+    plt.title("DVBF Training Progress - Total Loss")
     plt.legend()
-    plt.savefig(f"figures/training_progress.png")
+
+    plt.subplot(2, 1, 2)
+    plt.plot(train_recon_losses, "b-", label="Train Recon Loss")
+    plt.plot(train_kl_losses, "b.-", label="Train KL Loss")
+    plt.plot(val_recon_losses, "r-", label="Val Recon Loss")
+    plt.plot(val_kl_losses, "r.-", label="Val KL Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Component Losses")
+    plt.title("DVBF Training Progress - Component Losses")
+    plt.tight_layout()
+    plt.savefig(f"figures/training_progress_detailed.png")
     plt.close()
-    print(f"Plot saved as 'training_progress.png'")
+    print(f"Detailed plot saved as 'training_progress_detailed.png'")
 
 
 # Parameters
 init_key = jax.random.PRNGKey(0)
 learning_rate = 0.1
 batch_size = 1  # One sequence at a time
-data_split = 0.5
+data_split = 0.9
 num_epochs = 500
 
 latent_dim = 3
@@ -154,16 +181,27 @@ optimizer = optax.adadelta(learning_rate)
 # Training loop
 # Set up the plot
 plt.ion()  # Turn on interactive mode
-fig, ax = plt.subplots(figsize=(10, 6))
-(line1,) = ax.plot([], [], "b-", label="Train Loss")
-(line2,) = ax.plot([], [], "r-", label="Validation Loss")
-ax.set_xlabel("Epoch")
-ax.set_ylabel("Loss")
-ax.set_title("DVBF Training Progress")
-ax.legend()
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12), sharex=True)
+(line1,) = ax1.plot([], [], "b-", label="Train Loss")
+(line2,) = ax1.plot([], [], "r-", label="Validation Loss")
+ax1.set_ylabel("Total Loss")
+ax1.set_title("DVBF Training Progress")
+ax1.legend()
+
+(line3,) = ax2.plot([], [], "b-", label="Train Recon Loss")
+(line4,) = ax2.plot([], [], "b.-", label="Train KL Loss")
+(line5,) = ax2.plot([], [], "r-", label="Val Recon Loss")
+(line6,) = ax2.plot([], [], "r.-", label="Val KL loss")
+ax2.set_xlabel("Epoch")
+ax2.set_ylabel("Component Losses")
+ax2.legend()
 
 train_losses = []
+train_recon_losses = []
+train_kl_losses = []
 val_losses = []
+val_recon_losses = []
+val_kl_losses = []
 
 # Training loop
 train_state = create_train_state(
@@ -185,36 +223,71 @@ try:
 
         # Training loss
         total_train_loss = 0
+        total_train_recon_loss = 0
+        total_train_kl_loss = 0
         for i in range(0, train_size, batch_size):
             key, subkey = jax.random.split(key, 2)
             batch = (
                 xs_permuted[i : i + batch_size],
                 us_permuted[i : i + batch_size],
             )
+            old_train_state = train_state
             train_state, loss = train_step(train_state, batch, subkey)
+            train_loss, train_recon, train_kl = compute_loss(
+                old_train_state.params,
+                old_train_state.apply_fn,
+                *batch,
+                subkey,
+                separate=True,
+            )  # use old state for loss computation? Or new one?
             total_train_loss += loss
+            total_train_recon_loss += train_recon[0]
+            total_train_kl_loss += train_kl[0]
 
         # Validation loss
         total_val_loss = 0
+        total_val_recon_loss = 0
+        total_val_kl_loss = 0
         for i in range(0, xs_val.shape[0], batch_size):
             key, subkey = jax.random.split(key, 2)
             batch = (xs_val[i : i + batch_size], us_val[i : i + batch_size])
-            val_loss = compute_loss(
-                train_state.params, train_state.apply_fn, *batch, subkey
-            )[0]
-            total_val_loss += val_loss
+            val_loss, val_recon, val_kl = compute_loss(
+                train_state.params,
+                train_state.apply_fn,
+                *batch,
+                subkey,
+                separate=True,
+            )
+
+            total_val_loss += val_loss[0]
+            total_val_recon_loss += val_recon[0]
+            total_val_kl_loss += val_kl[0]
 
         total_train_loss /= train_size
+        total_train_recon_loss /= train_size
+        total_train_kl_loss /= train_size
         total_val_loss /= xs_val.shape[0]
+        total_val_recon_loss /= xs_val.shape[0]
+        total_val_kl_loss /= xs_val.shape[0]
 
         train_losses.append(total_train_loss)
+        train_recon_losses.append(total_train_recon_loss)
+        train_kl_losses.append(total_train_kl_loss)
         val_losses.append(total_val_loss)
+        val_recon_losses.append(total_val_recon_loss)
+        val_kl_losses.append(total_val_kl_loss)
 
         # Update the plot
-        line1.set_data(range(1, len(train_losses) + 1), train_losses)
-        line2.set_data(range(1, len(val_losses) + 1), val_losses)
-        ax.relim()
-        ax.autoscale_view()
+        epochs = range(1, len(train_losses) + 1)
+        line1.set_data(epochs, train_losses)
+        line2.set_data(epochs, val_losses)
+        line3.set_data(epochs, train_recon_losses)
+        line4.set_data(epochs, train_kl_losses)
+        line5.set_data(epochs, val_recon_losses)
+        line6.set_data(epochs, val_kl_losses)
+        for ax in (ax1, ax2):
+            ax.relim()
+            ax.autoscale_view()
         fig.canvas.draw()
         fig.canvas.flush_events()
 
@@ -231,7 +304,14 @@ except Exception as e:
 finally:
     # Save the model and plot regardless of how the training ends
     save_model(train_state, epoch)
-    save_plot(train_losses, val_losses)
+    save_plot(
+        train_losses,
+        train_recon_losses,
+        train_kl_losses,
+        val_losses,
+        val_recon_losses,
+        val_kl_losses,
+    )
 
 
 plt.ioff()
