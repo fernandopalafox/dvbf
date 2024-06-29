@@ -1,5 +1,4 @@
 import gymnasium as gym
-from gymnasium.wrappers import PixelObservationWrapper
 from gym import spaces
 import numpy as np
 import cv2
