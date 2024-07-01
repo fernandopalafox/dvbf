@@ -159,11 +159,14 @@ def save_plot(
     print(f"Detailed plot saved as 'training_progress_detailed.png'")
 
 
-def forward_pass(model, params, xs, us, key):
-    w_means, w_logvars, zs, xs_reconstructed = model.apply(
-        params, xs, us, rngs={"rng_stream": key}
-    )
-    return w_means, w_logvars, zs, xs_reconstructed
+def make_forward_pass_fn(model):
+    def forward_pass(params, xs, us, key):
+        w_means, w_logvars, zs, xs_reconstructed = model.apply(
+            params, xs, us, rngs={"rng_stream": key}
+        )
+        return w_means, w_logvars, zs, xs_reconstructed
+
+    return jax.jit(forward_pass)
 
 
 # Parameters
@@ -256,6 +259,7 @@ train_state = create_train_state(
     subkey, model, learning_rate, xs_train, us_train
 )
 elbo_loss = make_loss_fn(model)
+forward_pass = make_forward_pass_fn(model)
 c_i = c_0
 try:
     for epoch in range(num_epochs):
@@ -325,7 +329,6 @@ try:
             selected_batch = 0
             key, subkey = jax.random.split(key, 2)
             w_means, w_logvars, zs, xs_reconstructed = forward_pass(
-                model,
                 train_state.params,
                 xs_val[jnp.newaxis, selected_batch],
                 us_val[jnp.newaxis, selected_batch],
