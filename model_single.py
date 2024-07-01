@@ -48,20 +48,6 @@ class Observation(nn.Module):
         return mean
 
 
-class Recognition(nn.Module):
-    latent_dim: int
-
-    @nn.compact
-    def __call__(self, z_t, x_t_plus_one, u_t):
-        # 128 ReLU + 2 * latent_dim output
-        out = jnp.concatenate([z_t, x_t_plus_one, u_t], axis=-1)
-        out = nn.Dense(128)(out)
-        out = nn.relu(out)
-        params = nn.Dense(2 * self.latent_dim)(out)
-        w_mean, w_logvar = jnp.split(params, 2, axis=-1)
-        return w_mean, w_logvar
-
-
 class DVBFSingle(nn.Module):
     latent_dim: int
     obs_dim: int
