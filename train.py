@@ -239,6 +239,11 @@ ax2.legend()
 image_axes_t = [fig.add_subplot(gs[2, i]) for i in range(num_plotted_images)]
 image_axes_r = [fig.add_subplot(gs[3, i]) for i in range(num_plotted_images)]
 
+plt.tight_layout()
+for ax in image_axes_t + image_axes_r:
+    pos = ax.get_position()
+    ax.set_position([pos.x0, pos.y0 - 0.05, pos.width, pos.height])
+
 train_losses = []
 train_recon_losses = []
 train_kl_losses = []
@@ -332,8 +337,11 @@ try:
                 selected_batch
             ].reshape(-1, 16, 16)
 
-            xs_truth_reshaped = xs_truth_reshaped[1:]  # Skip the first image
             xs_reconstructed_reshaped = xs_reconstructed_reshaped[:-1]
+
+            variance_norms = jnp.linalg.norm(
+                jnp.exp(w_logvars[selected_batch]), axis=-1
+            )
 
             for i, ax in enumerate(image_axes_t):
                 if i < num_plotted_images:
@@ -355,6 +363,9 @@ try:
                     )
                     ax.set_xticks([])
                     ax.set_yticks([])
+                    ax.set_title(
+                        f"Var: {variance_norms[i]:.2f}",
+                    )
                     if i == 0:
                         ax.set_ylabel("Reconstructed")
 
