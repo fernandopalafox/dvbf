@@ -92,7 +92,8 @@ def train_step(state, batch, rng_key, c=1.0):
 
 
 def annealing_scheduler(i, T_a):
-    return jnp.min(jnp.array([1.0, 0.01 + i / T_a]))
+    # return jnp.min(jnp.array([1.0, 0.01 + i / T_a]))
+    return 1.0
 
 
 # Signal handler
@@ -163,7 +164,7 @@ def forward_pass(model, params, xs, us, key):
 init_key = jax.random.PRNGKey(0)
 learning_rate = 0.1
 optimizer = optax.adadelta(learning_rate)
-batch_size = 500
+batch_size = 1
 data_split = 0.5
 num_epochs = 5000
 c_0 = 0.01
