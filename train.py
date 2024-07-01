@@ -38,7 +38,7 @@ def compute_loss(params, apply_fn, xs, us, rng_key, c=1.0):
     # Reconstruction loss.
     # Logprobs from isotropic Gaussian observation model.
     logprob_xs = jax.scipy.stats.multivariate_normal.logpdf(
-        xs, xs_reconstructed, jnp.eye(obs_dim)
+        xs[:, 1:], xs_reconstructed[:, :-1], jnp.eye(obs_dim)
     )
     expected_logprob = jnp.sum(logprob_xs, axis=1)  # sum over time axis.
     reconstruction_loss = -expected_logprob  # flip sign
@@ -171,7 +171,7 @@ c_0 = 0.01
 T_a = 10**5
 update_interval = 250
 reconstruction_interval = 1
-num_plotted_images = 2
+num_plotted_images = 1
 
 latent_dim = 3
 obs_dim = 16**2
@@ -187,8 +187,8 @@ xs = xs / 255.0  # Normalize to [0, 1]
 us = actions
 
 # TEMPORARY
-xs = xs[:num_plotted_images, :num_plotted_images]
-us = us[:num_plotted_images, :num_plotted_images]
+xs = xs[: num_plotted_images + 1, : num_plotted_images + 1]
+us = us[: num_plotted_images + 1, : num_plotted_images + 1]
 
 sequence_length = xs.shape[1]
 train_size = int(data_split * xs.shape[0])
@@ -322,7 +322,9 @@ try:
                 selected_batch
             ].reshape(-1, 16, 16)
 
-            # Update the image sequence in the third row
+            xs_truth_reshaped = xs_truth_reshaped[1:]  # Skip the first image
+            xs_reconstructed_reshaped = xs_reconstructed_reshaped[:-1]
+
             for i, ax in enumerate(image_axes_t):
                 if i < num_plotted_images:
                     ax.clear()
