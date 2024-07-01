@@ -10,16 +10,19 @@ import matplotlib.pyplot as plt
 import signal
 
 
-def compute_annealed_kl_divergence(mean1, logvar1, mean2, logvar2, c):
+def compute_annealed_kl_divergence(m_q, logvar_q, mean_p, logvar_p, c_i):
     kl = jnp.sum(
-        c * 1 / 2 * jnp.log(2 * jnp.pi)
-        + c * 1 / 2 * logvar2
-        - 1 / 2 * jnp.log(2 * jnp.pi)
-        - 1 / 2 * logvar1
-        + c
-        * (jnp.exp(logvar1) + (mean1 - mean2) ** 2)
-        / (2 * jnp.exp(logvar2))
-        - 1 / 2,
+        0.5
+        * (
+            c_i * jnp.log(2 * jnp.pi)
+            + c_i * logvar_p
+            - jnp.log(2 * jnp.pi)
+            - logvar_q
+            + c_i
+            * (jnp.exp(logvar_q) + (m_q - mean_p) ** 2)
+            / jnp.exp(logvar_p)
+            - 1
+        ),
         axis=-1,
     )
     return -kl
