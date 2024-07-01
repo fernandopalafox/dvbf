@@ -255,6 +255,7 @@ val_recon_losses = []
 val_kl_losses = []
 
 # Training loop
+key, subkey = jax.random.split(init_key, 2)
 train_state = create_train_state(
     subkey, model, learning_rate, xs_train, us_train
 )
@@ -278,7 +279,6 @@ try:
         epoch_recon_losses = 0.0
         epoch_kl_losses = 0.0
         for i in range(0, train_size, batch_size):
-            key, subkey = jax.random.split(key, 2)
             update_i = epoch * (train_size // batch_size) + i
             if jnp.mod(update_i, update_interval) == 0:
                 c_i = annealing_scheduler(update_i, T_a)
@@ -287,6 +287,7 @@ try:
                 us_permuted[i : i + batch_size],
             )
             old_train_state = train_state
+            key, subkey = jax.random.split(key, 2)
             train_state, loss = train_step(train_state, batch, subkey, c=c_i)
             train_loss, train_recon, train_kl = elbo_loss(
                 old_train_state.params,
@@ -303,8 +304,8 @@ try:
         epoch_val_recon_losses = 0.0
         epoch_val_kl_losses = 0.0
         for i in range(0, xs_val.shape[0], batch_size):
-            key, subkey = jax.random.split(key, 2)
             batch = (xs_val[i : i + batch_size], us_val[i : i + batch_size])
+            key, subkey = jax.random.split(key, 2)
             val_loss, val_recon, val_kl = elbo_loss(
                 train_state.params,
                 *batch,
@@ -339,7 +340,6 @@ try:
             xs_reconstructed_reshaped = xs_reconstructed[
                 selected_batch
             ].reshape(-1, 16, 16)
-
             xs_reconstructed_reshaped = xs_reconstructed_reshaped[:-1]
 
             variance_norms = jnp.linalg.norm(
