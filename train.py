@@ -206,7 +206,7 @@ key, subkey = jax.random.split(init_key, 2)
 # Set up the plot
 plt.ion()  # Turn on interactive mode
 fig = plt.figure(figsize=(15, 15))
-gs = GridSpec(3, num_plotted_images, figure=fig)
+gs = GridSpec(4, num_plotted_images, figure=fig)
 
 ax1 = fig.add_subplot(gs[0, :])
 ax2 = fig.add_subplot(gs[1, :])
@@ -225,7 +225,8 @@ ax2.set_xlabel("Epoch")
 ax2.set_ylabel("Component Losses")
 ax2.legend()
 
-image_axes = [fig.add_subplot(gs[2, i]) for i in range(num_plotted_images)]
+image_axes_t = [fig.add_subplot(gs[2, i]) for i in range(num_plotted_images)]
+image_axes_r = [fig.add_subplot(gs[3, i]) for i in range(num_plotted_images)]
 
 train_losses = []
 train_recon_losses = []
@@ -315,18 +316,35 @@ try:
                 us_val[jnp.newaxis, selected_batch],
                 subkey,
             )
-            xs_reconstructed_reshaped = xs_reconstructed.reshape(1, -1, 16, 16)
+
+            xs_truth_reshaped = xs_val[selected_batch].reshape(-1, 16, 16)
+            xs_reconstructed_reshaped = xs_reconstructed[
+                selected_batch
+            ].reshape(-1, 16, 16)
 
             # Update the image sequence in the third row
-            for i, ax in enumerate(image_axes):
+            for i, ax in enumerate(image_axes_t):
                 if i < num_plotted_images:
                     ax.clear()
                     ax.imshow(
-                        xs_reconstructed_reshaped[selected_batch, i],
+                        xs_truth_reshaped[i],
                         cmap="gray",
                     )
-                    ax.axis("off")
-                    ax.set_title(f"Frame {i+1}")
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    if i == 0:
+                        ax.set_ylabel("Ground truth")
+            for i, ax in enumerate(image_axes_r):
+                if i < num_plotted_images:
+                    ax.clear()
+                    ax.imshow(
+                        xs_reconstructed_reshaped[i],
+                        cmap="gray",
+                    )
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    if i == 0:
+                        ax.set_ylabel("Reconstructed")
 
         # Update the plot
         epochs = range(1, len(train_losses) + 1)
