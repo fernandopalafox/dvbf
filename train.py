@@ -29,39 +29,45 @@ def compute_annealed_kl_divergence(m_q, logvar_q, mean_p, logvar_p, c_i):
     return -kl
 
 
-def compute_loss(params, apply_fn, xs, us, rng_key, c=1.0):
-    # Forward pass.
-    w_means, w_logvars, zs, xs_reconstructed = apply_fn(
-        params, xs, us, rngs={"rng_stream": rng_key}
-    )
+def make_loss_fn(model):
+    def elbo_loss(params, xs, us, rng_key, c=1.0):
+        # Forward pass.
+        w_means, w_logvars, zs, xs_reconstructed = model.apply(
+            params, xs, us, rngs={"rng_stream": rng_key}
+        )
 
-    # Reconstruction loss.
-    # Logprobs from isotropic Gaussian observation model.
-    logprob_xs = jax.scipy.stats.multivariate_normal.logpdf(
-        xs[:, 1:], xs_reconstructed[:, :-1], jnp.eye(obs_dim)
-    )
-    expected_logprob = jnp.sum(logprob_xs, axis=1)  # sum over time axis.
-    reconstruction_loss = -expected_logprob  # flip sign
-    annealed_reconstruction_loss = c * reconstruction_loss
+        # Reconstruction loss.
+        # Logprobs from isotropic Gaussian observation model.
+        logprob_xs = jax.scipy.stats.multivariate_normal.logpdf(
+            xs, xs_reconstructed[:, :-1], jnp.eye(obs_dim)
+        )
+        expected_logprob = jnp.sum(logprob_xs, axis=1)  # sum over time axis.
+        reconstruction_loss = -expected_logprob  # flip sign
+        annealed_reconstruction_loss = c * reconstruction_loss
 
-    # KL divergence between approximate posterior and prior posterior
-    # Assumes diagonal covariance matrices and zero mean prior
-    annealed_posterior_kl = jnp.sum(
-        compute_annealed_kl_divergence(
-            w_means,
-            w_logvars,
-            jnp.zeros_like(w_means),
-            jnp.zeros_like(w_logvars),
-            c,
-        ),
-        axis=1,
-    )  # sum over time axis
+        # KL divergence between approximate posterior and prior posterior
+        # Assumes diagonal covariance matrices and zero mean prior
+        annealed_posterior_kl = jnp.sum(
+            compute_annealed_kl_divergence(
+                w_means,
+                w_logvars,
+                jnp.zeros_like(w_means),
+                jnp.zeros_like(w_logvars),
+                c,
+            ),
+            axis=1,
+        )  # sum over time axis
 
-    return (
-        annealed_reconstruction_loss + annealed_posterior_kl,
-        annealed_reconstruction_loss,
-        annealed_posterior_kl,
-    )
+        # TEMPORARY
+        annealed_posterior_kl = jnp.zeros_like(annealed_posterior_kl)
+
+        return (
+            annealed_reconstruction_loss + annealed_posterior_kl,
+            annealed_reconstruction_loss,
+            annealed_posterior_kl,
+        )
+
+    return jax.jit(elbo_loss)
 
 
 def create_train_state(rng_key, model, learning_rate, xs, us):
@@ -83,7 +89,7 @@ def train_step(state, batch, rng_key, c=1.0):
     xs, us = batch
 
     def loss_fn(params):
-        loss, _, _ = compute_loss(params, state.apply_fn, xs, us, rng_key, c=c)
+        loss, _, _ = elbo_loss(params, xs, us, rng_key, c=c)
         return jnp.mean(loss)  # sgd
 
     loss, grads = jax.value_and_grad(loss_fn)(state.params)
@@ -157,7 +163,7 @@ def forward_pass(model, params, xs, us, key):
     w_means, w_logvars, zs, xs_reconstructed = model.apply(
         params, xs, us, rngs={"rng_stream": key}
     )
-    return w_means, w_logvars, xs_reconstructed
+    return w_means, w_logvars, zs, xs_reconstructed
 
 
 # Parameters
@@ -187,8 +193,8 @@ xs = xs / 255.0  # Normalize to [0, 1]
 us = actions
 
 # TEMPORARY
-xs = xs[: num_plotted_images + 1, : num_plotted_images + 1]
-us = us[: num_plotted_images + 1, : num_plotted_images + 1]
+xs = xs[:2, :num_plotted_images]
+us = us[:2, :num_plotted_images]
 
 sequence_length = xs.shape[1]
 train_size = int(data_split * xs.shape[0])
@@ -197,6 +203,11 @@ xs_train = xs[:train_size]
 us_train = us[:train_size]
 xs_val = xs[train_size:]
 us_val = us[train_size:]
+
+xs_train = jax.device_put(xs_train)
+us_train = jax.device_put(us_train)
+xs_val = jax.device_put(xs_val)
+us_val = jax.device_put(us_val)
 
 # Load model
 model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
@@ -239,6 +250,7 @@ val_kl_losses = []
 train_state = create_train_state(
     subkey, model, learning_rate, xs_train, us_train
 )
+elbo_loss = make_loss_fn(model)
 c_i = c_0
 try:
     for epoch in range(num_epochs):
@@ -267,9 +279,8 @@ try:
             )
             old_train_state = train_state
             train_state, loss = train_step(train_state, batch, subkey, c=c_i)
-            train_loss, train_recon, train_kl = compute_loss(
+            train_loss, train_recon, train_kl = elbo_loss(
                 old_train_state.params,
-                old_train_state.apply_fn,
                 *batch,
                 subkey,
                 c=c_i,
@@ -285,9 +296,8 @@ try:
         for i in range(0, xs_val.shape[0], batch_size):
             key, subkey = jax.random.split(key, 2)
             batch = (xs_val[i : i + batch_size], us_val[i : i + batch_size])
-            val_loss, val_recon, val_kl = compute_loss(
+            val_loss, val_recon, val_kl = elbo_loss(
                 train_state.params,
-                train_state.apply_fn,
                 *batch,
                 subkey,
                 c=c_i,
@@ -309,7 +319,7 @@ try:
         if epoch % reconstruction_interval == 0:
             selected_batch = 0
             key, subkey = jax.random.split(key, 2)
-            w_means, w_logvars, xs_reconstructed = forward_pass(
+            w_means, w_logvars, zs, xs_reconstructed = forward_pass(
                 model,
                 train_state.params,
                 xs_val[jnp.newaxis, selected_batch],
