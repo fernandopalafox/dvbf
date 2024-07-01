@@ -8,6 +8,7 @@ import pickle
 import time
 import matplotlib.pyplot as plt
 import signal
+from matplotlib.gridspec import GridSpec
 
 
 def compute_annealed_kl_divergence(m_q, logvar_q, mean_p, logvar_p, c_i):
@@ -151,6 +152,13 @@ def save_plot(
     print(f"Detailed plot saved as 'training_progress_detailed.png'")
 
 
+def forward_pass(model, params, xs, us, key):
+    w_means, w_logvars, zs, xs_reconstructed = model.apply(
+        params, xs, us, rngs={"rng_stream": key}
+    )
+    return w_means, w_logvars, xs_reconstructed
+
+
 # Parameters
 init_key = jax.random.PRNGKey(0)
 learning_rate = 0.1
@@ -161,6 +169,8 @@ num_epochs = 5000
 c_0 = 0.01
 T_a = 10**5
 update_interval = 250
+reconstruction_interval = 1
+num_plotted_images = 2
 
 latent_dim = 3
 obs_dim = 16**2
@@ -174,6 +184,10 @@ with open("data/pendulum_data.pkl", "rb") as f:
 xs = observations
 xs = xs / 255.0  # Normalize to [0, 1]
 us = actions
+
+# TEMPORARY
+xs = xs[:num_plotted_images, :num_plotted_images]
+us = us[:num_plotted_images, :num_plotted_images]
 
 sequence_length = xs.shape[1]
 train_size = int(data_split * xs.shape[0])
@@ -190,7 +204,12 @@ key, subkey = jax.random.split(init_key, 2)
 # Training loop
 # Set up the plot
 plt.ion()  # Turn on interactive mode
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12), sharex=True)
+fig = plt.figure(figsize=(15, 15))
+gs = GridSpec(3, num_plotted_images, figure=fig)
+
+ax1 = fig.add_subplot(gs[0, :])
+ax2 = fig.add_subplot(gs[1, :])
+
 (line1,) = ax1.plot([], [], "b-", label="Train Loss")
 (line2,) = ax1.plot([], [], "r-", label="Validation Loss")
 ax1.set_ylabel("Total Loss")
@@ -204,6 +223,8 @@ ax1.legend()
 ax2.set_xlabel("Epoch")
 ax2.set_ylabel("Component Losses")
 ax2.legend()
+
+image_axes = [fig.add_subplot(gs[2, i]) for i in range(num_plotted_images)]
 
 train_losses = []
 train_recon_losses = []
@@ -230,9 +251,9 @@ try:
         us_permuted = us_train[random_permutation]
 
         # Training loss
-        epoch_train_losses = []
-        epoch_recon_losses = []
-        epoch_kl_losses = []
+        epoch_train_loss = 0.0
+        epoch_recon_losses = 0.0
+        epoch_kl_losses = 0.0
         for i in range(0, train_size, batch_size):
             key, subkey = jax.random.split(key, 2)
             update_i = epoch * (train_size // batch_size) + i
@@ -251,14 +272,14 @@ try:
                 subkey,
                 c=c_i,
             )  # use old state for loss computation? Or new one?
-            epoch_train_losses.append(jnp.mean(train_loss))
-            epoch_recon_losses.append(jnp.mean(train_recon))
-            epoch_kl_losses.append(jnp.mean(train_kl))
+            epoch_train_loss += jnp.mean(train_loss)
+            epoch_recon_losses += jnp.mean(train_recon)
+            epoch_kl_losses += jnp.mean(train_kl)
 
         # Validation loss
-        epoch_val_losses = []
-        epoch_val_recon_losses = []
-        epoch_val_kl_losses = []
+        epoch_val_losses = 0.0
+        epoch_val_recon_losses = 0.0
+        epoch_val_kl_losses = 0.0
         for i in range(0, xs_val.shape[0], batch_size):
             key, subkey = jax.random.split(key, 2)
             batch = (xs_val[i : i + batch_size], us_val[i : i + batch_size])
@@ -269,16 +290,42 @@ try:
                 subkey,
                 c=c_i,
             )
-            epoch_val_losses.append(jnp.mean(val_loss))
-            epoch_val_recon_losses.append(jnp.mean(val_recon))
-            epoch_val_kl_losses.append(jnp.mean(val_kl))
+            epoch_val_losses += jnp.mean(val_loss)
+            epoch_val_recon_losses += jnp.mean(val_recon)
+            epoch_val_kl_losses += jnp.mean(val_kl)
 
-        train_losses.append(jnp.mean(epoch_train_losses))
-        train_recon_losses.append(jnp.mean(epoch_recon_losses))
-        train_kl_losses.append(jnp.mean(epoch_kl_losses))
-        val_losses.append(jnp.mean(epoch_val_losses))
-        val_recon_losses.append(jnp.mean(epoch_val_recon_losses))
-        val_kl_losses.append(jnp.mean(epoch_val_kl_losses))
+        num_batches_train = train_size // batch_size
+        num_batches_val = xs_val.shape[0] // batch_size
+        train_losses.append(epoch_train_loss / num_batches_train)
+        train_recon_losses.append(epoch_recon_losses / num_batches_train)
+        train_kl_losses.append(epoch_kl_losses / num_batches_train)
+        val_losses.append(epoch_val_losses / num_batches_val)
+        val_recon_losses.append(epoch_val_recon_losses / num_batches_val)
+        val_kl_losses.append(epoch_val_kl_losses / num_batches_val)
+
+        # Reconstruct images and plot
+        if epoch % reconstruction_interval == 0:
+            selected_batch = 0
+            key, subkey = jax.random.split(key, 2)
+            w_means, w_logvars, xs_reconstructed = forward_pass(
+                model,
+                train_state.params,
+                xs_val[jnp.newaxis, selected_batch],
+                us_val[jnp.newaxis, selected_batch],
+                subkey,
+            )
+            xs_reconstructed_reshaped = xs_reconstructed.reshape(1, -1, 16, 16)
+
+            # Update the image sequence in the third row
+            for i, ax in enumerate(image_axes):
+                if i < num_plotted_images:
+                    ax.clear()
+                    ax.imshow(
+                        xs_reconstructed_reshaped[selected_batch, i],
+                        cmap="gray",
+                    )
+                    ax.axis("off")
+                    ax.set_title(f"Frame {i+1}")
 
         # Update the plot
         epochs = range(1, len(train_losses) + 1)
@@ -298,11 +345,9 @@ try:
         epoch_time = time.time() - start_time
         eta = epoch_time * (num_epochs - epoch - 1)
         eta = time.strftime("%H:%M:%S", time.gmtime(eta))
+        print(f"E {epoch + 1} | TL {train_losses[-1]:.2f} |", end="")
         print(
-            f"E {epoch + 1} | TL {jnp.mean(epoch_train_losses):.2f} |", end=""
-        )
-        print(
-            f" VL {jnp.mean(epoch_val_losses):.2f} | t {epoch_time:.2f}s",
+            f" VL {val_losses[-1]:.2f} | t {epoch_time:.2f}s",
             end="",
         )
         print(f" | c {c_i:.2f}", end="")
