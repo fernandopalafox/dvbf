@@ -1,8 +1,6 @@
 import jax
 import jax.numpy as jnp
-import flax
 from flax import linen as nn
-import time
 
 
 class InitialNetwork(nn.Module):
@@ -73,14 +71,10 @@ class DVBFSingle(nn.Module):
         x_1 = observation(z_1)
 
         # Compute sequence of states
-        zs = [z_1]
-        xs_reconstructed = [observation(z_1), observation(z_1)]
-        w_means = [w_mean_init]
-        w_logvars = [w_logvar_init]
-
-        w_means = jnp.stack(w_means, axis=1)
-        w_logvars = jnp.stack(w_logvars, axis=1)
-        zs = jnp.stack(zs, axis=1)
+        xs_reconstructed = [x_1, x_1]
         xs_reconstructed = jnp.stack(xs_reconstructed, axis=1)
+        zs = z_1[jnp.newaxis]
+        w_means = w_mean_init[jnp.newaxis]
+        w_logvars = w_logvar_init[jnp.newaxis]
 
         return w_means, w_logvars, zs, xs_reconstructed
