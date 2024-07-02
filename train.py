@@ -170,7 +170,7 @@ def make_forward_pass_fn(model):
 init_key = jax.random.PRNGKey(0)
 learning_rate = 0.1
 optimizer = optax.adadelta(learning_rate)
-batch_size = 1
+batch_size = 500
 data_split = 0.5
 num_epochs = 5000
 c_0 = 0.01
@@ -197,8 +197,8 @@ us = actions
 random_permutation = jax.random.permutation(init_key, xs.shape[0])
 xs = xs[random_permutation]
 us = us[random_permutation]
-xs = xs[:2, :num_plotted_images]
-us = us[:2, :num_plotted_images]
+xs = xs[:, :num_plotted_images]
+us = us[:, :num_plotted_images]
 
 sequence_length = xs.shape[1]
 train_size = int(data_split * xs.shape[0])
