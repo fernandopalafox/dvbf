@@ -385,23 +385,23 @@ try:
             end_epoch = epoch + 1
 
         # Find max y value for visible points
-        max_y_ax1 = (
-            max(
-                max(train_losses[start_epoch:end_epoch]),
-                max(val_losses[start_epoch:end_epoch]),
-            )
-            * 1.10
+        max_y_ax1 = max(
+            max(train_losses[start_epoch:end_epoch]),
+            max(val_losses[start_epoch:end_epoch]),
         )
-        max_y_ax2 = (
-            max(
-                max(train_recon_losses[start_epoch:end_epoch]),
-                max(train_kl_losses[start_epoch:end_epoch]),
-                max(val_recon_losses[start_epoch:end_epoch]),
-                max(val_kl_losses[start_epoch:end_epoch]),
-            )
-            * 1.10
+        max_y_ax2 = max(
+            max(train_recon_losses[start_epoch:end_epoch]),
+            max(train_kl_losses[start_epoch:end_epoch]),
+            max(val_recon_losses[start_epoch:end_epoch]),
+            max(val_kl_losses[start_epoch:end_epoch]),
         )
-        ylims = (0.0, max_y_ax1, -0.05 * max_y_ax2, max_y_ax2)
+        min_y_ax2 = min(
+            min(train_recon_losses[start_epoch:end_epoch]),
+            min(train_kl_losses[start_epoch:end_epoch]),
+            min(val_recon_losses[start_epoch:end_epoch]),
+            min(val_kl_losses[start_epoch:end_epoch]),
+        )
+        ylims = (0.0, max_y_ax1 * 1.10, min_y_ax2 * 1.10, max_y_ax2 * 1.10)
 
         for i, ax in enumerate((ax1, ax2)):
             ax.set_xlim(start_epoch, end_epoch)
