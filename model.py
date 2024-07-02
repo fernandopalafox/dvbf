@@ -89,7 +89,7 @@ class DVBF(nn.Module):
         observation = Observation(self.obs_dim)
         recognition = Recognition(self.latent_dim)
         transition_weights = TransitionWeights(
-            self.latent_dim, self.control_dim
+            self.latent_dim, self.num_matrices
         )
 
         # Sample initial network
