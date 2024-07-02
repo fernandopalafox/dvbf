@@ -174,8 +174,8 @@ batch_size = 1
 data_split = 0.5
 num_epochs = 5000
 c_0 = 0.01
-T_a = 10**3
-update_interval = 100
+T_a = 10**5
+update_interval = 250
 max_visible_points = 30
 reconstruction_interval = 1
 num_plotted_images = 1
@@ -209,7 +209,7 @@ xs_val = xs[train_size:]
 us_val = us[train_size:]
 
 # Load model
-model = DVBFSingle(latent_dim, obs_dim, control_dim, num_matrices)
+model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
 
 # Training loop
 # Set up the plot

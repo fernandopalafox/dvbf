@@ -1,8 +1,6 @@
 import jax
 import jax.numpy as jnp
-import flax
 from flax import linen as nn
-import time
 
 
 class InitialNetwork(nn.Module):
@@ -98,11 +96,12 @@ class DVBF(nn.Module):
         w_mean_init, w_logvar_init = initial_network(xs)
         key = self.make_rng("rng_stream")
         w_1_init = w_mean_init + jnp.exp(
-            w_logvar_init / 2
+            0.5 * w_logvar_init
         ) * jax.random.normal(key, w_mean_init.shape)
 
         # Compute initial transition
         z_1 = initial_transition(w_1_init)
+        x_1 = observation(z_1)
 
         # Transition matrices
         As = self.param(
@@ -123,11 +122,11 @@ class DVBF(nn.Module):
 
         # Compute sequence of states
         zs = [z_1]
-        xs_reconstructed = []
-        w_means = []
-        w_logvars = []
+        xs_reconstructed = [x_1]
+        w_means = [w_1_init]
+        w_logvars = [w_logvar_init]
         T = xs.shape[1]
-        for t in range(1, T + 1):  # t = 1, ..., T
+        for t in range(1, T):  # t = 1, ..., T-1
             zs_t = zs[t - 1]
             xs_t_plus_one = xs[:, t]
             us_t = us[:, t - 1]
@@ -138,8 +137,8 @@ class DVBF(nn.Module):
             w_means.append(w_mean_t)
             w_logvars.append(w_logvar_t)
             key = self.make_rng("rng_stream")
-            w_t = w_mean_t + jnp.exp(w_logvar_t / 2) * jax.random.normal(
-                key, w_mean_t.shape
+            w_t = w_mean_t + jax.random.normal(key, w_mean_t.shape) * (
+                jnp.exp(w_logvar_t / 2)
             )
             # Compute deterministic component
             alphas = transition_weights(zs_t, us_t)
@@ -155,8 +154,10 @@ class DVBF(nn.Module):
             zs.append(z_t_plus_one)
 
             # Compute next observation
-            x_mean = observation(z_t_plus_one)
-            xs_reconstructed.append(x_mean)
+            xs_reconstructed.append(observation(z_t_plus_one))
+
+        # TEMPORARY:
+        xs_reconstructed.append(x_1)
 
         w_means = jnp.stack(w_means, axis=1)
         w_logvars = jnp.stack(w_logvars, axis=1)
