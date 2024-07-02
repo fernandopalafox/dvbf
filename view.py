@@ -78,9 +78,44 @@ def view_sequence(i, states, actions, reshaped_observations):
     plt.show()
 
 
-# Load data
-with open("data/pendulum_data.pkl", "rb") as f:
-    states, actions, reshaped_observations = pickle.load(f)
+def view_grid(xs, title):
+    """Create a grid of images from reshaped observations."""
+    num_sequences = xs.shape[0]
+    sequence_length = xs.shape[1]
+    image_size = int(np.sqrt(xs.shape[-1]))
 
-# View a single sequence
-view_sequence(1, states, actions, reshaped_observations)
+    # Revert reshape
+    observations = xs.reshape(
+        num_sequences, sequence_length, image_size, image_size
+    )
+
+    # Create the figure
+    fig, axs = plt.subplots(
+        num_sequences,
+        sequence_length,
+        figsize=(sequence_length, num_sequences),
+    )
+
+    # Plot each image
+    for i in range(num_sequences):
+        for j in range(sequence_length):
+            plt.subplot(
+                num_sequences, sequence_length, i * sequence_length + j + 1
+            )
+            plt.imshow(observations[i, j], cmap="gray")
+            plt.axis("off")
+
+    # Display the figure
+    plt.tight_layout()
+    plt.show()
+
+    # Save the figure
+    fig.savefig("figures/" + title + ".png")
+
+
+# # Load data
+# with open("data/pendulum_data.pkl", "rb") as f:
+#     states, actions, reshaped_observations = pickle.load(f)
+
+# # View a single sequence
+# view_sequence(1, states, actions, reshaped_observations)
