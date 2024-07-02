@@ -9,6 +9,7 @@ import time
 import matplotlib.pyplot as plt
 import signal
 from matplotlib.gridspec import GridSpec
+from model_single import DVBFSingle
 
 
 def compute_annealed_kl_divergence(m_q, logvar_q, mean_p, logvar_p, c_i):
@@ -58,9 +59,6 @@ def make_loss_fn(model):
             axis=1,
         )  # sum over time axis
 
-        # TEMPORARY
-        annealed_posterior_kl = jnp.zeros_like(annealed_posterior_kl)
-
         return (
             annealed_reconstruction_loss + annealed_posterior_kl,
             annealed_reconstruction_loss,
@@ -98,8 +96,7 @@ def train_step(state, batch, rng_key, c=1.0):
 
 
 def annealing_scheduler(i, T_a):
-    # return jnp.min(jnp.array([1.0, 0.01 + i / T_a]))
-    return 1.0
+    return jnp.min(jnp.array([1.0, 0.01 + i / T_a]))
 
 
 # Signal handler
@@ -177,8 +174,9 @@ batch_size = 1
 data_split = 0.5
 num_epochs = 5000
 c_0 = 0.01
-T_a = 10**5
-update_interval = 250
+T_a = 10**3
+update_interval = 100
+max_visible_points = 30
 reconstruction_interval = 1
 num_plotted_images = 1
 
@@ -192,10 +190,13 @@ with open("data/pendulum_data.pkl", "rb") as f:
     states, actions, observations = pickle.load(f)
 
 xs = observations
-xs = xs / 255.0  # Normalize to [0, 1]
+# xs = xs / 255.0  # Normalize to [0, 1]
 us = actions
 
 # TEMPORARY
+random_permutation = jax.random.permutation(init_key, xs.shape[0])
+xs = xs[random_permutation]
+us = us[random_permutation]
 xs = xs[:2, :num_plotted_images]
 us = us[:2, :num_plotted_images]
 
@@ -207,14 +208,8 @@ us_train = us[:train_size]
 xs_val = xs[train_size:]
 us_val = us[train_size:]
 
-xs_train = jax.device_put(xs_train)
-us_train = jax.device_put(us_train)
-xs_val = jax.device_put(xs_val)
-us_val = jax.device_put(us_val)
-
 # Load model
-model = DVBF(latent_dim, obs_dim, control_dim, num_matrices)
-key, subkey = jax.random.split(init_key, 2)
+model = DVBFSingle(latent_dim, obs_dim, control_dim, num_matrices)
 
 # Training loop
 # Set up the plot
