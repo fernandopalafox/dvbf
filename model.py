@@ -126,38 +126,38 @@ class DVBF(nn.Module):
         w_means = [w_1_init]
         w_logvars = [w_logvar_init]
         T = xs.shape[1]
-        for t in range(1, T):  # t = 1, ..., T-1
-            zs_t = zs[t - 1]
-            xs_t_plus_one = xs[:, t]
-            us_t = us[:, t - 1]
+        if T == 1:
+            xs_reconstructed.append(x_1)
+        else:
+            for t in range(1, T + 1):  # t = 1, ..., T-1
+                zs_t = zs[t - 1]
+                xs_t_plus_one = xs[:, t]
+                us_t = us[:, t - 1]
 
-            # Compute next latent state
-            # Sample stochastic component
-            w_mean_t, w_logvar_t = recognition(zs_t, xs_t_plus_one, us_t)
-            w_means.append(w_mean_t)
-            w_logvars.append(w_logvar_t)
-            key = self.make_rng("rng_stream")
-            w_t = w_mean_t + jax.random.normal(key, w_mean_t.shape) * (
-                jnp.exp(w_logvar_t / 2)
-            )
-            # Compute deterministic component
-            alphas = transition_weights(zs_t, us_t)
-            A_t = jnp.einsum("bi,ijk-> bjk", alphas, As)
-            B_t = jnp.einsum("bi,ijk-> bjk", alphas, Bs)
-            C_t = jnp.einsum("bi,ijk-> bjk", alphas, Cs)
-            # Compute next latent state
-            z_t_plus_one = (
-                jnp.einsum("bjk, bk -> bj", A_t, zs_t)
-                + jnp.einsum("bjk, bk -> bj", B_t, us_t)
-                + jnp.einsum("bjk, bk -> bj", C_t, w_t)
-            )
-            zs.append(z_t_plus_one)
+                # Compute next latent state
+                # Sample stochastic component
+                w_mean_t, w_logvar_t = recognition(zs_t, xs_t_plus_one, us_t)
+                w_means.append(w_mean_t)
+                w_logvars.append(w_logvar_t)
+                key = self.make_rng("rng_stream")
+                w_t = w_mean_t + jax.random.normal(key, w_mean_t.shape) * (
+                    jnp.exp(w_logvar_t / 2)
+                )
+                # Compute deterministic component
+                alphas = transition_weights(zs_t, us_t)
+                A_t = jnp.einsum("bi,ijk-> bjk", alphas, As)
+                B_t = jnp.einsum("bi,ijk-> bjk", alphas, Bs)
+                C_t = jnp.einsum("bi,ijk-> bjk", alphas, Cs)
+                # Compute next latent state
+                z_t_plus_one = (
+                    jnp.einsum("bjk, bk -> bj", A_t, zs_t)
+                    + jnp.einsum("bjk, bk -> bj", B_t, us_t)
+                    + jnp.einsum("bjk, bk -> bj", C_t, w_t)
+                )
+                zs.append(z_t_plus_one)
 
-            # Compute next observation
-            xs_reconstructed.append(observation(z_t_plus_one))
-
-        # TEMPORARY:
-        xs_reconstructed.append(x_1)
+                # Compute next observation
+                xs_reconstructed.append(observation(z_t_plus_one))
 
         w_means = jnp.stack(w_means, axis=1)
         w_logvars = jnp.stack(w_logvars, axis=1)
