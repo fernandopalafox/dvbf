@@ -375,9 +375,40 @@ try:
         line4.set_data(epochs, train_kl_losses)
         line5.set_data(epochs, val_recon_losses)
         line6.set_data(epochs, val_kl_losses)
-        for ax in (ax1, ax2):
+
+        # Set the x-axis limits
+        if epoch > max_visible_points:
+            start_epoch = epoch - max_visible_points
+            end_epoch = epoch + 1
+        else:
+            start_epoch = 0
+            end_epoch = epoch + 1
+
+        # Find max y value for visible points
+        max_y_ax1 = (
+            max(
+                max(train_losses[start_epoch:end_epoch]),
+                max(val_losses[start_epoch:end_epoch]),
+            )
+            * 1.10
+        )
+        max_y_ax2 = (
+            max(
+                max(train_recon_losses[start_epoch:end_epoch]),
+                max(train_kl_losses[start_epoch:end_epoch]),
+                max(val_recon_losses[start_epoch:end_epoch]),
+                max(val_kl_losses[start_epoch:end_epoch]),
+            )
+            * 1.10
+        )
+        ylims = (0.0, max_y_ax1, -0.05 * max_y_ax2, max_y_ax2)
+
+        for i, ax in enumerate((ax1, ax2)):
+            ax.set_xlim(start_epoch, end_epoch)
+            ax.set_ylim(ylims[i * 2], ylims[i * 2 + 1])
             ax.relim()
             ax.autoscale_view()
+
         fig.canvas.draw()
         fig.canvas.flush_events()
 
