@@ -88,7 +88,7 @@ def train_step(state, batch, rng_key, c=1.0):
 
     def loss_fn(params):
         loss, _, _ = elbo_loss(params, xs, us, rng_key, c=c)
-        return jnp.mean(loss)  # sgd
+        return jnp.sum(loss)
 
     loss, grads = jax.value_and_grad(loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
@@ -96,7 +96,7 @@ def train_step(state, batch, rng_key, c=1.0):
 
 
 def annealing_scheduler(i, T_a):
-    return jnp.min(jnp.array([1.0, 0.01 + i / T_a]))
+    return jnp.min(jnp.array([1.0, c_0 + i / T_a]))
 
 
 # Signal handler
@@ -190,7 +190,7 @@ with open("data/pendulum_data.pkl", "rb") as f:
     states, actions, observations = pickle.load(f)
 
 xs = observations
-# xs = xs / 255.0  # Normalize to [0, 1]
+xs = xs / 255.0  # Normalize to [0, 1]
 us = actions
 
 # TEMPORARY
@@ -256,7 +256,7 @@ train_state = create_train_state(
 )
 elbo_loss = make_loss_fn(model)
 forward_pass = make_forward_pass_fn(model)
-c_i = c_0
+c_i = 0.0
 try:
     for epoch in range(num_epochs):
         if not continue_training:
