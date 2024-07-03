@@ -322,24 +322,20 @@ try:
 
         # Reconstruct images and plot
         if epoch % reconstruction_interval == 0:
-            selected_batch = 0
+            selected_sequence = 0
             key, subkey = jax.random.split(key, 2)
             w_means, w_logvars, zs, xs_reconstructed = forward_pass(
                 train_state.params,
-                xs_val[jnp.newaxis, selected_batch],
-                us_val[jnp.newaxis, selected_batch],
+                xs_val[jnp.newaxis, selected_sequence],
+                us_val[jnp.newaxis, selected_sequence],
                 subkey,
             )
 
-            xs_truth_reshaped = xs_val[selected_batch].reshape(-1, 16, 16)
-            xs_reconstructed_reshaped = xs_reconstructed[
-                selected_batch
-            ].reshape(-1, 16, 16)
+            xs_truth_reshaped = xs_val[selected_sequence].reshape(-1, 16, 16)
+            xs_reconstructed_reshaped = xs_reconstructed.reshape(-1, 16, 16)
             xs_reconstructed_reshaped = xs_reconstructed_reshaped[:-1]
 
-            variance_norms = jnp.linalg.norm(
-                jnp.exp(w_logvars[selected_batch]), axis=-1
-            )
+            variance_norms = jnp.linalg.norm(jnp.exp(w_logvars), axis=-1)
 
             for i, ax in enumerate(image_axes_t):
                 if i < num_plotted_images:
